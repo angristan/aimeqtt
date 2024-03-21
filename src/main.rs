@@ -172,7 +172,8 @@ fn craft_publish_packet() -> Vec<u8> {
     */
 
     packet.push(u8::from_be_bytes([0b0011_0000])); // PUBLISH message type (0011 + DUP + QoS Level + RETAIN
-    packet.push(0x00); // Remaining Length (variable header + payload) -- placeholder, will be computed later
+
+    // Here should be the 'Remaining Length' field
 
     /*
     =======================
@@ -183,6 +184,7 @@ fn craft_publish_packet() -> Vec<u8> {
     packet.push(0x00); // Topic name Length MSB
     packet.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
     packet.extend_from_slice(b"a/b"); // Topic Name
+
     // Packet Identifier - optional for QoS 0
     packet.push(0x00); // Packet Identifier MSB
     packet.push(0x00); // Packet Identifier LSB
@@ -193,11 +195,32 @@ fn craft_publish_packet() -> Vec<u8> {
     =======================
     */
 
-    packet.extend_from_slice(b"Hello, MQTT :D"); // Payload
+    packet.extend_from_slice(b"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."); // Payload
 
-    // Compute "Remaining Length" field of the fixed header: length of variable header + payload
-    let remaining_length = packet.len() - 2; // Subtract 2 bytes for the fixed header
-    packet[1] = remaining_length as u8;
+    // Compute "Remaining Length" field of the fixed header
+    let mut remaining_length = packet.len() - 1; // variable header + payload = total length - fixed header
+
+    // Encode the "Remaining Length" field as per MQTT protocol specification:
+    /*
+       The Remaining Length is encoded using a variable length encoding scheme which uses a single byte for values up to 127.
+       Larger values are handled as follows. The least significant seven bits of each byte encode the data,
+       and the most significant bit is used to indicate that there are following bytes in the representation.
+       Thus each byte encodes 128 values and a "continuation bit". The maximum number of bytes in the Remaining Length field is four.
+
+       This allows applications to send Control Packets of size up to 268,435,455 (256 MB)
+    */
+    let mut encoded_bytes: Vec<u8> = vec![];
+    while remaining_length > 0 {
+        let mut byte = (remaining_length % 128) as u8;
+        remaining_length /= 128;
+        if remaining_length > 0 {
+            byte |= u8::from_be(128);
+        }
+        encoded_bytes.push(byte);
+    }
+
+    // Add the encoded bytes (1 up to 4) representing the "Remaining Length" field, starting from the second byte of the fixed header
+    packet.splice(1..1, encoded_bytes.iter().cloned());
 
     packet
 }
