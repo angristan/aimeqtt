@@ -77,7 +77,22 @@ fn craft_connect_packet() -> Vec<u8> {
     // Bit	7	            6	            5	            4 3	        2           1	            0
     //      username flag	password flag   Will retain     Will QoS    Will flag	Clean session   reserved
     //      x	            x	            x	            xx	        x	        x	           	0
-    packet.push(u8::from_be(0b0000_0010)); // (Clean Session)
+    let username_flag = 0;
+    let password_flag = 0;
+    let will_retain = 0;
+    let will_qos = 0;
+    let will_flag = 0;
+    let clean_session = 1;
+    let reserved = 0;
+    packet.push(
+        username_flag << 7
+            | password_flag << 6
+            | will_retain << 5
+            | will_qos << 3
+            | will_flag << 2
+            | clean_session << 1
+            | reserved,
+    );
 
     // Keep Alive
     packet.push(0x00); // Keep Alive MSB
