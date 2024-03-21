@@ -167,6 +167,41 @@ fn craft_publish_packet() -> Vec<u8> {
 
     packet
 }
+#[derive(Debug)]
+enum ConnackReturnCode {
+    ConnectionAccepted = 0,
+    ConnectionRefusedUnacceptableProtocolVersion = 1,
+    ConnectionRefusedIdentifierRejected = 2,
+    ConnectionRefusedServerUnavailable = 3,
+    ConnectionRefusedBadUsernameOrPassword = 4,
+    ConnectionRefusedNotAuthorized = 5,
+}
+
+impl From<u8> for ConnackReturnCode {
+    fn from(code: u8) -> Self {
+        match code {
+            0 => ConnackReturnCode::ConnectionAccepted,
+            1 => ConnackReturnCode::ConnectionRefusedUnacceptableProtocolVersion,
+            2 => ConnackReturnCode::ConnectionRefusedIdentifierRejected,
+            3 => ConnackReturnCode::ConnectionRefusedServerUnavailable,
+            4 => ConnackReturnCode::ConnectionRefusedBadUsernameOrPassword,
+            5 => ConnackReturnCode::ConnectionRefusedNotAuthorized,
+            _ => panic!("Invalid CONNACK return code: {}", code),
+        }
+    }
+}
+
+fn parse_connack_packet(packet: &[u8]) {
+    // Parse the CONNACK packet according to MQTT protocol specification
+    let connack_flags = packet[2];
+    let connack_return_code = packet[3];
+
+    println!("CONNACK Flags: {:08b}", connack_flags); // all bites to 0, last bit is session present
+    println!(
+        "CONNACK Return Code: {:?}",
+        ConnackReturnCode::from(connack_return_code)
+    );
+}
 
 #[cfg(test)]
 mod tests {
