@@ -183,6 +183,9 @@ fn craft_publish_packet() -> Vec<u8> {
     packet.push(0x00); // Topic name Length MSB
     packet.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
     packet.extend_from_slice(b"a/b"); // Topic Name
+    // Packet Identifier - optional for QoS 0
+    packet.push(0x00); // Packet Identifier MSB
+    packet.push(0x00); // Packet Identifier LSB
 
     /*
     =======================
