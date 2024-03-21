@@ -32,8 +32,8 @@ fn main() {
                         }
                         println!("Server response: {:?}", &response[0..n]);
 
-                        // Parse the CONNACK packet
-                        parse_connack_packet(&response);
+                        // Parse the server response
+                        parse_incoming_packet(&response[0..n]);
 
                         // Craft the PUBLISH message
                         let publish_packet = craft_publish_packet();
@@ -229,6 +229,26 @@ fn parse_connack_packet(packet: &[u8]) {
         "CONNACK Return Code: {:?}",
         ConnackReturnCode::from(connack_return_code)
     );
+}
+
+fn parse_pingresp_packet(packet: &[u8]) {
+    if packet[0] != 0b1101_0000 {
+        eprintln!("Invalid PINGRESP packet.");
+    }
+
+    // Parse the PINGRESP packet according to MQTT protocol specification
+    println!("PINGRESP packet received.");
+}
+
+fn parse_incoming_packet(packet: &[u8]) {
+    // Parse the incoming packet according to MQTT protocol specification
+    let packet_type = packet[0] >> 4;
+
+    match packet_type {
+        2 => parse_connack_packet(packet),
+        13 => parse_pingresp_packet(packet),
+        _ => println!("Unsupported packet type: {}", packet_type),
+    }
 }
 
 fn craft_pingreq_packet() -> Vec<u8> {
