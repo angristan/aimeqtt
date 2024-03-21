@@ -1,5 +1,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     let server_address = "127.0.0.1:1883";
@@ -18,24 +20,49 @@ fn main() {
 
             println!("CONNECT message sent successfully.");
 
-            // Read the response from the server
-            let mut response = [0; 128];
-            match stream.read(&mut response) {
-                Ok(_) => {
-                    println!("Server response: {:?}", response);
+            loop {
+                // Read the response from the server
+                let mut response = [0; 128];
+                match stream.read(&mut response) {
+                    Ok(n) => {
+                        if n == 0 {
+                            // n == 0 means the other side has closed the connection
+                            println!("Server closed the connection.");
+                            break;
+                        }
+                        println!("Server response: {:?}", &response[0..n]);
 
-                    // Craft the PUBLISH message
-                    let publish_packet = craft_publish_packet();
+                        // Parse the CONNACK packet
+                        parse_connack_packet(&response);
 
-                    // Send the PUBLISH message
-                    if let Err(e) = stream.write(&publish_packet) {
-                        eprintln!("Failed to send PUBLISH message: {}", e);
-                        return;
+                        // Craft the PUBLISH message
+                        let publish_packet = craft_publish_packet();
+
+                        // Send the PUBLISH message
+                        if let Err(e) = stream.write(&publish_packet) {
+                            eprintln!("Failed to send PUBLISH message: {}", e);
+                            return;
+                        } else {
+                            println!("PUBLISH message sent successfully.");
+                        }
+
+                        thread::sleep(Duration::from_secs(5));
+
+                        // Craft the PINGREQ message
+                        let pingreq_packet = craft_pingreq_packet();
+
+                        // Send the PINGREQ message
+                        if let Err(e) = stream.write(&pingreq_packet) {
+                            eprintln!("Failed to send PINGREQ message: {}", e);
+                            return;
+                        } else {
+                            println!("PINGREQ message sent successfully.");
+                        }
                     }
-                }
-                Err(e) => {
-                    eprintln!("Failed to read server response: {}", e);
-                    return;
+                    Err(e) => {
+                        eprintln!("Failed to read server response: {}", e);
+                        break;
+                    }
                 }
             }
         }
@@ -110,7 +137,7 @@ fn craft_connect_packet() -> Vec<u8> {
 
     // Keep Alive
     packet.push(0x00); // Keep Alive MSB
-    packet.push(u8::from_be(60)); // Keep Alive LSB (60 seconds)
+    packet.push(u8::from_be(10)); // Keep Alive LSB (10 seconds)
 
     /*
     =======================
@@ -167,6 +194,7 @@ fn craft_publish_packet() -> Vec<u8> {
 
     packet
 }
+
 #[derive(Debug)]
 enum ConnackReturnCode {
     ConnectionAccepted = 0,
@@ -201,6 +229,22 @@ fn parse_connack_packet(packet: &[u8]) {
         "CONNACK Return Code: {:?}",
         ConnackReturnCode::from(connack_return_code)
     );
+}
+
+fn craft_pingreq_packet() -> Vec<u8> {
+    // Construct the PINGREQ packet according to MQTT protocol specification
+    let mut packet = Vec::new();
+
+    /*
+    =======================
+    Fixed header
+    =======================
+    */
+
+    packet.push(u8::from_be_bytes([0b1100_0000])); // PINGREQ message type
+    packet.push(0x00); // Remaining Length
+
+    packet
 }
 
 #[cfg(test)]
