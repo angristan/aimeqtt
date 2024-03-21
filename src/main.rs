@@ -47,6 +47,31 @@ fn main() {
 
 // Ref: https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html
 
+// Connect Flags
+// Bit	7	            6	            5	            4 3	        2           1	            0
+//      username flag	password flag   Will retain     Will QoS    Will flag	Clean session   reserved
+//      x	            x	            x	            xx	        x	        x	           	0
+struct ConnectFlags {
+    username_flag: u8,
+    password_flag: u8,
+    will_retain: u8,
+    will_qos: u8,
+    will_flag: u8,
+    clean_session: u8,
+}
+
+impl ConnectFlags {
+    fn to_byte(&self) -> u8 {
+        self.username_flag << 7
+            | self.password_flag << 6
+            | self.will_retain << 5
+            | self.will_qos << 3 // QoS level is 2 bits (0, 1, 2)
+            | self.will_flag << 2
+            | self.clean_session << 1
+            | 0 // reserved
+    }
+}
+
 fn craft_connect_packet() -> Vec<u8> {
     // Construct the CONNECT packet according to MQTT protocol specification
     let mut packet = Vec::new();
@@ -73,26 +98,15 @@ fn craft_connect_packet() -> Vec<u8> {
 
     packet.push(0x04); // Protocol Level (4 for MQTT 3.1.1)
 
-    // Connect Flags
-    // Bit	7	            6	            5	            4 3	        2           1	            0
-    //      username flag	password flag   Will retain     Will QoS    Will flag	Clean session   reserved
-    //      x	            x	            x	            xx	        x	        x	           	0
-    let username_flag = 0;
-    let password_flag = 0;
-    let will_retain = 0;
-    let will_qos = 0;
-    let will_flag = 0;
-    let clean_session = 1;
-    let reserved = 0;
-    packet.push(
-        username_flag << 7
-            | password_flag << 6
-            | will_retain << 5
-            | will_qos << 3
-            | will_flag << 2
-            | clean_session << 1
-            | reserved,
-    );
+    let connect_flags = ConnectFlags {
+        username_flag: 0,
+        password_flag: 0,
+        will_retain: 0,
+        will_qos: 0,
+        will_flag: 0,
+        clean_session: 1,
+    };
+    packet.push(connect_flags.to_byte());
 
     // Keep Alive
     packet.push(0x00); // Keep Alive MSB
