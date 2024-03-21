@@ -138,3 +138,17 @@ fn craft_publish_packet() -> Vec<u8> {
 
     packet
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_craft_connect_packet() {
+        let packet = craft_connect_packet();
+        assert_eq!(
+            packet,
+            vec![16, 16, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 4, 114, 117, 115, 116]
+        );
+    }
+}
