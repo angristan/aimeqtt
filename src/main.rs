@@ -4,70 +4,74 @@ use std::thread;
 use std::time::Duration;
 
 fn main() {
-    let server_address = "127.0.0.1:1883";
+    let broker_address = "127.0.0.1:1883";
 
-    // Connect to the MQTT broker
-    match TcpStream::connect(server_address) {
-        Ok(mut stream) => {
-            // Craft the CONNECT message
-            let connect_packet = craft_connect_packet();
+    loop {
+        // Connect to the MQTT broker
+        match TcpStream::connect(broker_address) {
+            Ok(mut stream) => {
+                // Craft the CONNECT message
+                let connect_packet = craft_connect_packet();
 
-            // Send the CONNECT message
-            if let Err(e) = stream.write(&connect_packet) {
-                eprintln!("Failed to send CONNECT message: {}", e);
-                return;
-            }
+                // Send the CONNECT message
+                if let Err(e) = stream.write(&connect_packet) {
+                    eprintln!("Failed to send CONNECT message: {}", e);
+                    return;
+                }
 
-            println!("CONNECT message sent successfully.");
+                println!("CONNECT message sent successfully.");
 
-            loop {
-                // Read the response from the server
-                let mut response = [0; 128];
-                match stream.read(&mut response) {
-                    Ok(n) => {
-                        if n == 0 {
-                            // n == 0 means the other side has closed the connection
-                            println!("Server closed the connection.");
+                loop {
+                    // Read the response from the broker
+                    let mut response = [0; 128];
+                    match stream.read(&mut response) {
+                        Ok(n) => {
+                            if n == 0 {
+                                // n == 0 means the other side has closed the connection
+                                println!("Broker closed the connection.");
+                                break;
+                            }
+                            println!("Broker response: {:?}", &response[0..n]);
+
+                            // Parse the broker response
+                            parse_incoming_packet(&response[0..n]);
+
+                            // Craft the PUBLISH message
+                            let publish_packet = craft_publish_packet();
+
+                            // Send the PUBLISH message
+                            if let Err(e) = stream.write(&publish_packet) {
+                                eprintln!("Failed to send PUBLISH message: {}", e);
+                                return;
+                            } else {
+                                println!("PUBLISH message sent successfully.");
+                            }
+
+                            thread::sleep(Duration::from_secs(5));
+
+                            // Craft the PINGREQ message
+                            let pingreq_packet = craft_pingreq_packet();
+
+                            // Send the PINGREQ message
+                            if let Err(e) = stream.write(&pingreq_packet) {
+                                eprintln!("Failed to send PINGREQ message: {}", e);
+                                return;
+                            } else {
+                                println!("PINGREQ message sent successfully.");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to read broker response: {}", e);
                             break;
                         }
-                        println!("Server response: {:?}", &response[0..n]);
-
-                        // Parse the server response
-                        parse_incoming_packet(&response[0..n]);
-
-                        // Craft the PUBLISH message
-                        let publish_packet = craft_publish_packet();
-
-                        // Send the PUBLISH message
-                        if let Err(e) = stream.write(&publish_packet) {
-                            eprintln!("Failed to send PUBLISH message: {}", e);
-                            return;
-                        } else {
-                            println!("PUBLISH message sent successfully.");
-                        }
-
-                        thread::sleep(Duration::from_secs(5));
-
-                        // Craft the PINGREQ message
-                        let pingreq_packet = craft_pingreq_packet();
-
-                        // Send the PINGREQ message
-                        if let Err(e) = stream.write(&pingreq_packet) {
-                            eprintln!("Failed to send PINGREQ message: {}", e);
-                            return;
-                        } else {
-                            println!("PINGREQ message sent successfully.");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read server response: {}", e);
-                        break;
                     }
                 }
             }
-        }
-        Err(e) => {
-            eprintln!("Failed to connect to MQTT broker: {}", e);
+            Err(e) => {
+                eprintln!("Failed to connect to MQTT broker: {}", e);
+                // Retry connection after 5 seconds
+                thread::sleep(Duration::from_secs(5));
+            }
         }
     }
 }
