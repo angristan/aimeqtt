@@ -1,4 +1,3 @@
-use std::thread;
 use std::time::Duration;
 mod client;
 
@@ -6,9 +5,12 @@ mod client;
 async fn main() {
     let broker_address = "127.0.0.1:1883";
 
-    let _ = client::client::new(broker_address);
+    let tx = client::client::new(broker_address).await;
 
     loop {
-        thread::sleep(Duration::from_secs(5));
+        tx.send("msg".to_string())
+            .expect("Failed to send message to client thread.");
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
