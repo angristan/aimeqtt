@@ -65,27 +65,31 @@ impl Client {
                 Ok(mut stream) => {
                     println!("Connected to MQTT broker successfully.");
 
-                    self.send_connect_packet()
-                        .expect("Failed to send CONNECT packet to client thread.");
-                    println!("CONNECT message sent successfully.");
+                    match self.send_connect_packet() {
+                        Ok(_) => println!("CONNECT message sent successfully."),
+                        Err(e) => eprintln!("Failed to send CONNECT message: {}", e),
+                    }
 
                     let mut ping_interval = time::interval(time::Duration::from_secs(10));
 
                     loop {
                         tokio::select! {
                             _ = ping_interval.tick() => {
-                                self.send_pingreq_packet().expect("Failed to send PINGREQ packet to client thread.");
-                                println!("PINGREQ message sent successfully.");
+                                match self.send_pingreq_packet() {
+                                    Ok(_) => println!("PINGREQ message sent successfully."),
+                                    Err(e) => eprintln!("Failed to send PINGREQ message: {}", e),
+                                }
                             }
                             Some(msg) = publish_channel_receiver.recv() => {
-                                self.send_publish_packet(msg).expect("Failed to send PUBLISH packet to client thread.");
-                                println!("PUBLISH message sent successfully.");
+                                match self.send_publish_packet(msg) {
+                                    Ok(_) => println!("PUBLISH message sent successfully."),
+                                    Err(e) => eprintln!("Failed to send PUBLISH message: {}", e),
+                                }
                             }
                             Some(packet) = self.raw_tcp_channel_receiver.as_mut().unwrap().recv() => {
-                                if let Err(e) = stream.write(&packet).await {
-                                    eprintln!("Failed to send raw TCP packet: {}", e);
-                                } else {
-                                    println!("Raw TCP packet sent successfully.");
+                                match stream.write(&packet).await {
+                                    Ok(_) => println!("Raw TCP packet sent successfully."),
+                                    Err(e) => eprintln!("Failed to send raw TCP packet: {}", e),
                                 }
                             }
                             _ = stream.ready(Interest::READABLE) => {
@@ -93,7 +97,6 @@ impl Client {
                                 match stream.try_read(&mut response) {
                                     Ok(n) => {
                                         if n == 0 {
-                                            // n == 0 means the other side has closed the connection
                                             println!("Broker closed the connection.");
                                             break;
                                         }
