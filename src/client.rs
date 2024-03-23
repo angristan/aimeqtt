@@ -9,6 +9,7 @@ use tokio::time;
 
 pub struct Client {
     broker_address: String,
+    keep_alive: u16,
 
     username: Option<String>,
     password: Option<String>,
@@ -75,6 +76,7 @@ pub async fn new(options: ClientOptions) -> Client {
 
     let mut client = Client {
         broker_address,
+        keep_alive: options.keep_alive,
         username: options.username,
         password: options.password,
         publish_channel_sender,
@@ -97,6 +99,7 @@ impl Client {
     pub fn clone(&self) -> Client {
         Client {
             broker_address: self.broker_address.clone(),
+            keep_alive: self.keep_alive,
             username: self.username.clone(),
             password: self.password.clone(),
             publish_channel_sender: self.publish_channel_sender.clone(),
@@ -135,7 +138,10 @@ impl Client {
                         Err(e) => eprintln!("Failed to send CONNECT message: {}", e),
                     }
 
-                    let mut ping_interval = time::interval(time::Duration::from_secs(10));
+                    // Send PINGREQ at least once every keep_alive seconds
+                    // so the broker knows the client is still alive
+                    let mut ping_interval =
+                        time::interval(Duration::from_secs(self.keep_alive as u64) / 2);
 
                     // Event loop
                     loop {
