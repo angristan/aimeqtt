@@ -25,31 +25,39 @@ impl ConnectFlags {
     }
 }
 
+struct RawPacket {
+    fixed_header: Vec<u8>,
+    variable_header: Vec<u8>,
+    payload: Vec<u8>,
+}
+
+impl RawPacket {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&self.fixed_header);
+        bytes.extend_from_slice(&self.variable_header);
+        bytes.extend_from_slice(&self.payload);
+        bytes
+    }
+}
+
 pub fn craft_connect_packet() -> Vec<u8> {
     // Construct the CONNECT packet according to MQTT protocol specification
-    let mut packet = Vec::new();
-
-    /*
-    =======================
-    Fixed header
-    =======================
-    */
+    let mut packet = RawPacket {
+        fixed_header: Vec::new(),
+        variable_header: Vec::new(),
+        payload: Vec::new(),
+    };
 
     // Fixed header (CONNECT)
-    packet.push(u8::from_be_bytes([0b0001_0000])); // CONNECT message type
-    packet.push(0x00); // Remaining Length (variable header + payload) -- placeholder, will be computed later
+    packet.fixed_header.push(u8::from_be_bytes([0b0001_0000])); // CONNECT message type
+    packet.fixed_header.push(0x00); // Remaining Length (variable header + payload) -- placeholder, will be computed later
 
-    /*
-    =======================
-    Variable header
-    =======================
-    */
+    packet.variable_header.push(0x00); // Protocol Name Length MSB
+    packet.variable_header.push(0x04); // Protocol Name Length LSB
+    packet.variable_header.extend_from_slice(b"MQTT"); // Protocol Name
 
-    packet.push(0x00); // Protocol Name Length MSB
-    packet.push(0x04); // Protocol Name Length LSB
-    packet.extend_from_slice(b"MQTT"); // Protocol Name
-
-    packet.push(0x04); // Protocol Level (4 for MQTT 3.1.1)
+    packet.variable_header.push(0x04); // Protocol Level (4 for MQTT 3.1.1)
 
     let connect_flags = ConnectFlags {
         username_flag: 0,
@@ -59,68 +67,48 @@ pub fn craft_connect_packet() -> Vec<u8> {
         will_flag: 0,
         clean_session: 1,
     };
-    packet.push(connect_flags.to_byte());
+    packet.variable_header.push(connect_flags.to_byte());
 
     // Keep Alive
-    packet.push(0x00); // Keep Alive MSB
-    packet.push(u8::from_be(10)); // Keep Alive LSB (10 seconds)
-
-    /*
-    =======================
-    Payload
-    =======================
-    */
+    packet.variable_header.push(0x00); // Keep Alive MSB
+    packet.variable_header.push(u8::from_be(10)); // Keep Alive LSB (10 seconds)
 
     // Client id
-    packet.push(0x00); // Client ID Length MSB
-    packet.push(0x04); // Client ID Length LSB //TODO: compute this dynamically
-    packet.extend_from_slice(b"rust"); // Client IDs
+    packet.payload.push(0x00); // Client ID Length MSB
+    packet.payload.push(0x04); // Client ID Length LSB //TODO: compute this dynamically
+    packet.payload.extend_from_slice(b"rust"); // Client IDs
 
     // Compute "Remaining Length" field of the fixed header: length of variable header + payload
-    let remaining_length = packet.len() - 2; // Subtract 2 bytes for the fixed header
-    packet[1] = remaining_length as u8;
+    let remaining_length = packet.variable_header.len() + packet.payload.len();
+    packet.fixed_header[1] = remaining_length as u8;
 
-    packet
+    packet.to_bytes()
 }
 
 pub fn craft_publish_packet(payload: String) -> Vec<u8> {
     // Construct the PUBLISH packet according to MQTT protocol specification
-    let mut packet = Vec::new();
+    let mut packet = RawPacket {
+        fixed_header: Vec::new(),
+        variable_header: Vec::new(),
+        payload: Vec::new(),
+    };
 
-    /*
-    =======================
-    Fixed header
-    =======================
-    */
+    packet.fixed_header.push(u8::from_be_bytes([0b0011_0000])); // PUBLISH message type (0011 + DUP + QoS Level + RETAIN
 
-    packet.push(u8::from_be_bytes([0b0011_0000])); // PUBLISH message type (0011 + DUP + QoS Level + RETAIN
+    // <Here should be the 'Remaining Length' field>
 
-    // Here should be the 'Remaining Length' field
-
-    /*
-    =======================
-    Variable header
-    =======================
-    */
-
-    packet.push(0x00); // Topic name Length MSB
-    packet.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
-    packet.extend_from_slice(b"a/b"); // Topic Name
+    packet.variable_header.push(0x00); // Topic name Length MSB
+    packet.variable_header.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
+    packet.variable_header.extend_from_slice(b"a/b"); // Topic Name
 
     // Packet Identifier - optional for QoS 0
-    packet.push(0x00); // Packet Identifier MSB
-    packet.push(0x00); // Packet Identifier LSB
+    packet.variable_header.push(0x00); // Packet Identifier MSB
+    packet.variable_header.push(0x00); // Packet Identifier LSB
 
-    /*
-    =======================
-    Payload
-    =======================
-    */
-
-    packet.extend_from_slice(payload.as_bytes()); // Payload
+    packet.payload.extend_from_slice(payload.as_bytes()); // Payload
 
     // Compute "Remaining Length" field of the fixed header
-    let mut remaining_length = packet.len() - 1; // variable header + payload = total length - fixed header
+    let mut remaining_length = packet.variable_header.len() + packet.payload.len();
 
     // Encode the "Remaining Length" field as per MQTT protocol specification:
     /*
@@ -142,9 +130,11 @@ pub fn craft_publish_packet(payload: String) -> Vec<u8> {
     }
 
     // Add the encoded bytes (1 up to 4) representing the "Remaining Length" field, starting from the second byte of the fixed header
-    packet.splice(1..1, encoded_bytes.iter().cloned());
-
     packet
+        .fixed_header
+        .splice(1..1, encoded_bytes.iter().cloned());
+
+    packet.to_bytes()
 }
 
 #[derive(Debug)]
@@ -205,18 +195,16 @@ pub fn parse_incoming_packet(packet: &[u8]) {
 
 pub fn craft_pingreq_packet() -> Vec<u8> {
     // Construct the PINGREQ packet according to MQTT protocol specification
-    let mut packet = Vec::new();
+    let mut packet = RawPacket {
+        fixed_header: Vec::new(),
+        variable_header: Vec::new(),
+        payload: Vec::new(),
+    };
 
-    /*
-    =======================
-    Fixed header
-    =======================
-    */
+    packet.fixed_header.push(u8::from_be_bytes([0b1100_0000])); // PINGREQ message type
+    packet.fixed_header.push(0x00); // Remaining Length
 
-    packet.push(u8::from_be_bytes([0b1100_0000])); // PINGREQ message type
-    packet.push(0x00); // Remaining Length
-
-    packet
+    packet.to_bytes()
 }
 
 #[cfg(test)]
