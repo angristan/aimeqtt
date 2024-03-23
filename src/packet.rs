@@ -1,14 +1,32 @@
 // Ref: https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html
+// https://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html
 
 use std::time::Duration;
 
 #[derive(Clone)]
-enum PacketType {
+pub enum PacketType {
     CONNECT = 1,
     CONNACK = 2,
     PUBLISH = 3,
+    SUBSCRIBE = 8,
+    SUBACK = 9,
     PINGREQ = 12,
     PINGRESP = 13,
+}
+
+impl From<u8> for PacketType {
+    fn from(code: u8) -> Self {
+        match code {
+            1 => PacketType::CONNECT,
+            2 => PacketType::CONNACK,
+            3 => PacketType::PUBLISH,
+            8 => PacketType::SUBSCRIBE,
+            9 => PacketType::SUBACK,
+            12 => PacketType::PINGREQ,
+            13 => PacketType::PINGRESP,
+            _ => panic!("Invalid packet type: {}", code),
+        }
+    }
 }
 
 struct Packet {
@@ -19,6 +37,7 @@ struct Packet {
     client_id: String,
     packet_id: Option<u8>,
     topic: Option<String>,
+    topic_filter: Option<String>,
     message: Option<String>,
 }
 
@@ -32,6 +51,7 @@ impl Packet {
             client_id: "".to_string(),
             packet_id: None,
             topic: None,
+            topic_filter: None,
             message: None,
         }
     }
@@ -63,6 +83,11 @@ impl Packet {
 
     fn with_topic(mut self, topic: String) -> Packet {
         self.topic = Some(topic);
+        self
+    }
+
+    fn with_topic_filter(mut self, topic_filter: String) -> Packet {
+        self.topic_filter = Some(topic_filter);
         self
     }
 
@@ -192,6 +217,22 @@ impl Packet {
                     .payload
                     .extend_from_slice(self.message.as_ref().unwrap().as_bytes());
             }
+            PacketType::SUBSCRIBE => {
+                packet.fixed_header[0] |= 0b0000_0010; // Set QoS = 1
+
+                packet.variable_header.push(0x00); // Packet Identifier MSB
+                packet.variable_header.push(0x01); // Packet Identifier LSB
+
+                packet.variable_header.push(0x00); // Topic Filter Length MSB
+                packet
+                    .variable_header
+                    .push(self.topic_filter.as_ref().unwrap().len() as u8); // Topic Filter Length LSB
+                packet
+                    .variable_header
+                    .extend_from_slice(self.topic_filter.as_ref().unwrap().as_bytes()); // Topic Filter
+
+                packet.variable_header.push(0x00); // Requested QoS
+            }
             _ => {}
         }
 
@@ -257,6 +298,14 @@ pub fn craft_pingreq_packet() -> Vec<u8> {
         .to_bytes()
 }
 
+pub fn craft_subscribe_packet(topic_filter: String) -> Vec<u8> {
+    Packet::new(PacketType::SUBSCRIBE)
+        .with_client_id("rust".to_string())
+        .with_topic_filter(topic_filter)
+        .to_raw_packet()
+        .to_bytes()
+}
+
 #[derive(Debug)]
 enum ConnackReturnCode {
     ConnectionAccepted = 0,
@@ -302,15 +351,26 @@ pub fn parse_pingresp_packet(packet: &[u8]) {
     println!("PINGRESP packet received.");
 }
 
-pub fn parse_incoming_packet(packet: &[u8]) {
-    // Parse the incoming packet according to MQTT protocol specification
-    let packet_type = packet[0] >> 4;
+pub fn parse_suback_packet(packet: &[u8]) {
+    // Parse the SUBACK packet according to MQTT protocol specification
+    let packet_id = (packet[2] as u16) << 8 | packet[3] as u16;
+    let return_code = packet[4];
 
-    match packet_type {
-        2 => parse_connack_packet(packet),
-        13 => parse_pingresp_packet(packet),
-        _ => println!("Unsupported packet type: {}", packet_type),
-    }
+    println!("SUBACK Packet ID: {}", packet_id);
+    println!("SUBACK Return Code: {}", return_code);
+}
+
+pub fn parse_publish_packet(packet: &[u8]) -> (String, String) {
+    // Parse the PUBLISH packet according to MQTT protocol specification
+    let topic_length = (packet[2] as u16) << 8 | packet[3] as u16;
+    let topic = std::str::from_utf8(&packet[4..(4 + topic_length as usize)]).unwrap();
+
+    let message = std::str::from_utf8(&packet[(4 + topic_length as usize)..]).unwrap();
+
+    println!("PUBLISH Topic: {}", topic);
+    println!("PUBLISH Message: {}", message);
+
+    (topic.to_string(), message.to_string())
 }
 
 #[cfg(test)]

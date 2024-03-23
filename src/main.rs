@@ -14,9 +14,14 @@ async fn main() {
             username.unwrap_or("".to_string()),
             password.unwrap_or("".to_string()),
         )
-        .with_keep_alive(60);
+        .with_keep_alive(60)
+        .with_callback_handler(callback_handler);
 
-    let mqtt_client = client::new(mqtt_client_options).await;
+    let mut mqtt_client = client::new(mqtt_client_options).await;
+
+    mqtt_client
+        .subscribe("a/b".to_string())
+        .expect("Failed to subscribe to topic.");
 
     loop {
         mqtt_client
@@ -25,4 +30,8 @@ async fn main() {
 
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+fn callback_handler(payload: String) {
+    println!("Received message: {}", payload);
 }

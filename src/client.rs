@@ -20,6 +20,8 @@ pub struct Client {
     // TCP packets -> TCP stream
     raw_tcp_channel_sender: mpsc::UnboundedSender<Vec<u8>>,
     raw_tcp_channel_receiver: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
+
+    callback_handler: Option<fn(String)>,
 }
 
 pub struct PublishRequest {
@@ -33,6 +35,7 @@ pub struct ClientOptions {
     pub username: Option<String>,
     pub password: Option<String>,
     pub keep_alive: u16,
+    pub callback_handler: Option<fn(String)>,
 }
 
 impl ClientOptions {
@@ -43,6 +46,7 @@ impl ClientOptions {
             username: None,
             password: None,
             keep_alive: 60,
+            callback_handler: None,
         }
     }
 
@@ -54,6 +58,11 @@ impl ClientOptions {
 
     pub fn with_keep_alive(mut self, keep_alive: u16) -> ClientOptions {
         self.keep_alive = keep_alive;
+        self
+    }
+
+    pub fn with_callback_handler(mut self, callback_handler: fn(String)) -> ClientOptions {
+        self.callback_handler = Some(callback_handler);
         self
     }
 }
@@ -72,6 +81,7 @@ pub async fn new(options: ClientOptions) -> Client {
         publish_channel_receiver: Some(publish_channel_receiver),
         raw_tcp_channel_sender,
         raw_tcp_channel_receiver: Some(raw_tcp_channel_receiver),
+        callback_handler: options.callback_handler,
     };
 
     let cloned_client = client.clone(); // client without receivers, to be used outside
@@ -91,6 +101,7 @@ impl Client {
             password: self.password.clone(),
             publish_channel_sender: self.publish_channel_sender.clone(),
             raw_tcp_channel_sender: self.raw_tcp_channel_sender.clone(),
+            callback_handler: self.callback_handler,
 
             // we only use the receivers to feed the event loop
             // so we don't need to clone them
@@ -114,7 +125,12 @@ impl Client {
                 Ok(mut stream) => {
                     println!("Connected to MQTT broker successfully.");
 
-                    match self.send_connect_packet() {
+                    let connect_packet = crate::packet::craft_connect_packet(
+                        self.username.clone(),
+                        self.password.clone(),
+                    );
+
+                    match stream.write(&connect_packet).await {
                         Ok(_) => println!("CONNECT message sent successfully."),
                         Err(e) => eprintln!("Failed to send CONNECT message: {}", e),
                     }
@@ -151,8 +167,23 @@ impl Client {
                                             break;
                                         }
 
-                                        // Parse the broker response
-                                        crate::packet::parse_incoming_packet(&response[0..n]);
+                                        let packet = &response[0..n];
+                                        // Parse the incoming packet according to MQTT protocol specification
+                                        let packet_type = packet[0] >> 4;
+
+                                        match crate::packet::PacketType::from(packet_type) {
+                                            crate::packet::PacketType::CONNACK => crate::packet::parse_connack_packet(packet),
+                                            crate::packet::PacketType::PUBLISH => {
+                                                let (_, payload) = crate::packet::parse_publish_packet(packet);
+                                                if let Some(callback_handler) = self.callback_handler {
+                                                    // TODO: this is blocking the event loop, we should run this in a separate task
+                                                    callback_handler(payload);
+                                                }
+                                            }
+                                            crate::packet::PacketType::SUBACK => crate::packet::parse_suback_packet(packet),
+                                            crate::packet::PacketType::PINGRESP => crate::packet::parse_pingresp_packet(packet),
+                                            _ => println!("Unsupported packet type: {}", packet_type),
+                                        }
                                     }
                                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                         continue;
@@ -179,10 +210,12 @@ impl Client {
             .send(PublishRequest { topic, payload })
     }
 
-    fn send_connect_packet(&self) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
-        let connect_packet =
-            crate::packet::craft_connect_packet(self.username.clone(), self.password.clone());
-        self.raw_tcp_channel_sender.send(connect_packet)
+    pub fn subscribe(
+        &mut self,
+        topic_filter: String,
+    ) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
+        let subscribe_packet = crate::packet::craft_subscribe_packet(topic_filter);
+        self.raw_tcp_channel_sender.send(subscribe_packet)
     }
 
     fn send_pingreq_packet(&self) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
