@@ -3,7 +3,9 @@
     name = "aimeqtt"
     version = "0.1.0"
 
-    # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+    name = "aimeqtt"
 
 [dependencies]
     tokio = { version = "1.36.0", features = ["full"] }
