@@ -1,11 +1,12 @@
 use std::time::Duration;
 mod client;
+mod packet;
 
 #[tokio::main]
 async fn main() {
     let broker_address = "127.0.0.1:1883";
 
-    let mqtt_client = client::client::new(broker_address).await;
+    let mqtt_client = client::new(broker_address).await;
 
     loop {
         mqtt_client
