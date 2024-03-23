@@ -14,12 +14,17 @@ pub struct Client {
     password: Option<String>,
 
     // Payloads -> PUBLISH
-    publish_channel_sender: mpsc::UnboundedSender<String>,
-    publish_channel_receiver: Option<mpsc::UnboundedReceiver<String>>,
+    publish_channel_sender: mpsc::UnboundedSender<PublishRequest>,
+    publish_channel_receiver: Option<mpsc::UnboundedReceiver<PublishRequest>>,
 
     // TCP packets -> TCP stream
     raw_tcp_channel_sender: mpsc::UnboundedSender<Vec<u8>>,
     raw_tcp_channel_receiver: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
+}
+
+pub struct PublishRequest {
+    pub topic: String,
+    pub payload: String,
 }
 
 pub async fn new(
@@ -27,7 +32,6 @@ pub async fn new(
     username: Option<String>,
     password: Option<String>,
 ) -> Client {
-    //TODO: username, password, client_id, keep_alive
     let broker_address = broker_address.to_string();
 
     let (publish_channel_sender, publish_channel_receiver) = mpsc::unbounded_channel();
@@ -53,7 +57,7 @@ pub async fn new(
 }
 
 impl Client {
-    fn clone(&self) -> Client {
+    pub fn clone(&self) -> Client {
         Client {
             broker_address: self.broker_address.clone(),
             username: self.username.clone(),
@@ -100,7 +104,7 @@ impl Client {
                                 }
                             }
                             Some(msg) = publish_channel_receiver.recv() => {
-                                match self.send_publish_packet(msg) {
+                                match self.send_publish_packet(msg.topic, msg.payload) {
                                     Ok(_) => println!("PUBLISH message sent successfully."),
                                     Err(e) => eprintln!("Failed to send PUBLISH message: {}", e),
                                 }
@@ -139,8 +143,13 @@ impl Client {
         }
     }
 
-    pub fn publish(&self, payload: String) -> Result<(), mpsc::error::SendError<String>> {
-        self.publish_channel_sender.send(payload)
+    pub fn publish(
+        &self,
+        topic: String,
+        payload: String,
+    ) -> Result<(), mpsc::error::SendError<PublishRequest>> {
+        self.publish_channel_sender
+            .send(PublishRequest { topic, payload })
     }
 
     fn send_connect_packet(&self) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
@@ -154,8 +163,12 @@ impl Client {
         self.raw_tcp_channel_sender.send(pingreq_packet)
     }
 
-    fn send_publish_packet(&self, payload: String) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
-        let publish_packet = crate::packet::craft_publish_packet(payload);
+    fn send_publish_packet(
+        &self,
+        topic: String,
+        payload: String,
+    ) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
+        let publish_packet = crate::packet::craft_publish_packet(topic, payload);
         self.raw_tcp_channel_sender.send(publish_packet)
     }
 }

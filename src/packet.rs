@@ -18,6 +18,7 @@ struct Packet {
     keep_alive: Option<Duration>,
     client_id: String,
     packet_id: Option<u8>,
+    topic: Option<String>,
     message: Option<String>,
 }
 
@@ -143,8 +144,12 @@ impl Packet {
             }
             PacketType::PUBLISH => {
                 packet.variable_header.push(0x00); // Topic name Length MSB
-                packet.variable_header.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
-                packet.variable_header.extend_from_slice(b"a/b"); // Topic Name
+                packet
+                    .variable_header
+                    .push(self.topic.as_ref().unwrap().len() as u8); // Topic name Length LSB
+                packet
+                    .variable_header
+                    .extend_from_slice(self.topic.as_ref().unwrap().as_bytes()); // Topic Name
 
                 // Packet Identifier - optional for QoS 0
                 // packet.variable_header.push(0x00); // Packet Identifier MSB
@@ -201,13 +206,14 @@ pub fn craft_connect_packet(username: Option<String>, password: Option<String>) 
         keep_alive: Some(Duration::from_secs(10)),
         client_id: "rust".to_string(),
         packet_id: None,
+        topic: None,
         message: None,
     };
 
     packet.to_raw_packet().to_bytes()
 }
 
-pub fn craft_publish_packet(payload: String) -> Vec<u8> {
+pub fn craft_publish_packet(topic: String, payload: String) -> Vec<u8> {
     let packet = Packet {
         packet_type: PacketType::PUBLISH,
         username: None,
@@ -215,6 +221,7 @@ pub fn craft_publish_packet(payload: String) -> Vec<u8> {
         keep_alive: None,
         client_id: "rust".to_string(),
         packet_id: None,
+        topic: Some(topic),
         message: Some(payload),
     };
 
@@ -229,6 +236,7 @@ pub fn craft_pingreq_packet() -> Vec<u8> {
         keep_alive: None,
         client_id: "rust".to_string(),
         packet_id: None,
+        topic: None,
         message: None,
     };
 
@@ -318,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_craft_publish_packet() {
-        let packet = craft_publish_packet("Hello, MQTT!".to_string());
+        let packet = craft_publish_packet("a/b".to_string(), "Hello, MQTT!".to_string());
         assert_eq!(
             packet,
             vec![48, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33]

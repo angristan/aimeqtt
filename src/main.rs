@@ -12,7 +12,7 @@ async fn main() {
 
     loop {
         mqtt_client
-            .publish("msg".to_string())
+            .publish("a/b".to_string(), "msg".to_string())
             .expect("Failed to send message to client thread.");
 
         tokio::time::sleep(Duration::from_secs(5)).await;
