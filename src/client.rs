@@ -27,20 +27,47 @@ pub struct PublishRequest {
     pub payload: String,
 }
 
-pub async fn new(
-    broker_address: &str,
-    username: Option<String>,
-    password: Option<String>,
-) -> Client {
-    let broker_address = broker_address.to_string();
+pub struct ClientOptions {
+    pub broker_host: String,
+    pub broker_port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub keep_alive: u16,
+}
+
+impl ClientOptions {
+    pub fn new(broker_host: String, broker_port: u16) -> ClientOptions {
+        ClientOptions {
+            broker_host,
+            broker_port,
+            username: None,
+            password: None,
+            keep_alive: 60,
+        }
+    }
+
+    pub fn with_credentials(mut self, username: String, password: String) -> ClientOptions {
+        self.username = Some(username);
+        self.password = Some(password);
+        self
+    }
+
+    pub fn with_keep_alive(mut self, keep_alive: u16) -> ClientOptions {
+        self.keep_alive = keep_alive;
+        self
+    }
+}
+
+pub async fn new(options: ClientOptions) -> Client {
+    let broker_address = format!("{}:{}", options.broker_host, options.broker_port);
 
     let (publish_channel_sender, publish_channel_receiver) = mpsc::unbounded_channel();
     let (raw_tcp_channel_sender, raw_tcp_channel_receiver) = mpsc::unbounded_channel();
 
     let mut client = Client {
         broker_address,
-        username,
-        password,
+        username: options.username,
+        password: options.password,
         publish_channel_sender,
         publish_channel_receiver: Some(publish_channel_receiver),
         raw_tcp_channel_sender,
