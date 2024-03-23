@@ -123,6 +123,10 @@ impl Packet {
 
                 // Auth
                 if self.username.is_some() {
+                    packet.payload.push(0x00); // Username Length MSB
+                    packet
+                        .payload
+                        .push(self.username.as_ref().unwrap().len() as u8); // Username Length LSB
                     packet
                         .payload
                         .extend_from_slice(self.username.as_ref().unwrap().as_bytes());
@@ -189,11 +193,11 @@ impl Packet {
     }
 }
 
-pub fn craft_connect_packet() -> Vec<u8> {
+pub fn craft_connect_packet(username: Option<String>, password: Option<String>) -> Vec<u8> {
     let packet = Packet {
         packet_type: PacketType::CONNECT,
-        username: None,
-        password: None,
+        username: username,
+        password: password,
         keep_alive: Some(Duration::from_secs(10)),
         client_id: "rust".to_string(),
         packet_id: None,
@@ -293,10 +297,22 @@ mod tests {
 
     #[test]
     fn test_craft_connect_packet() {
-        let packet = craft_connect_packet();
+        let packet = craft_connect_packet(None, None);
         assert_eq!(
             packet,
             vec![16, 16, 0, 4, 77, 81, 84, 84, 4, 2, 0, 10, 0, 4, 114, 117, 115, 116]
+        );
+    }
+
+    #[test]
+    fn test_craft_publish_packet_auth() {
+        let packet = craft_connect_packet(Some("user".to_string()), Some("pass".to_string()));
+        assert_eq!(
+            packet,
+            vec![
+                16, 28, 0, 4, 77, 81, 84, 84, 4, 194, 0, 10, 0, 4, 114, 117, 115, 116, 0, 4, 117,
+                115, 101, 114, 0, 4, 112, 97, 115, 115
+            ]
         );
     }
 

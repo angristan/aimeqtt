@@ -5,8 +5,10 @@ mod packet;
 #[tokio::main]
 async fn main() {
     let broker_address = "127.0.0.1:1883";
+    let username = None;
+    let password = None;
 
-    let mqtt_client = client::new(broker_address).await;
+    let mqtt_client = client::new(broker_address, username, password).await;
 
     loop {
         mqtt_client

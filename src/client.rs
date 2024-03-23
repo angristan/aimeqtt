@@ -10,6 +10,9 @@ use tokio::time;
 pub struct Client {
     broker_address: String,
 
+    username: Option<String>,
+    password: Option<String>,
+
     // Payloads -> PUBLISH
     publish_channel_sender: mpsc::UnboundedSender<String>,
     publish_channel_receiver: Option<mpsc::UnboundedReceiver<String>>,
@@ -19,7 +22,11 @@ pub struct Client {
     raw_tcp_channel_receiver: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
 }
 
-pub async fn new(broker_address: &str) -> Client {
+pub async fn new(
+    broker_address: &str,
+    username: Option<String>,
+    password: Option<String>,
+) -> Client {
     //TODO: username, password, client_id, keep_alive
     let broker_address = broker_address.to_string();
 
@@ -28,6 +35,8 @@ pub async fn new(broker_address: &str) -> Client {
 
     let mut client = Client {
         broker_address,
+        username,
+        password,
         publish_channel_sender,
         publish_channel_receiver: Some(publish_channel_receiver),
         raw_tcp_channel_sender,
@@ -47,6 +56,8 @@ impl Client {
     fn clone(&self) -> Client {
         Client {
             broker_address: self.broker_address.clone(),
+            username: self.username.clone(),
+            password: self.password.clone(),
             publish_channel_sender: self.publish_channel_sender.clone(),
             raw_tcp_channel_sender: self.raw_tcp_channel_sender.clone(),
 
@@ -133,7 +144,8 @@ impl Client {
     }
 
     fn send_connect_packet(&self) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
-        let connect_packet = crate::packet::craft_connect_packet();
+        let connect_packet =
+            crate::packet::craft_connect_packet(self.username.clone(), self.password.clone());
         self.raw_tcp_channel_sender.send(connect_packet)
     }
 
