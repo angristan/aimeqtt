@@ -22,6 +22,56 @@ struct Packet {
     message: Option<String>,
 }
 
+impl Packet {
+    fn new(packet_type: PacketType) -> Packet {
+        Packet {
+            packet_type,
+            username: None,
+            password: None,
+            keep_alive: None,
+            client_id: "".to_string(),
+            packet_id: None,
+            topic: None,
+            message: None,
+        }
+    }
+
+    fn with_username(mut self, username: String) -> Packet {
+        self.username = Some(username);
+        self
+    }
+
+    fn with_password(mut self, password: String) -> Packet {
+        self.password = Some(password);
+        self
+    }
+
+    fn with_keep_alive(mut self, keep_alive: Duration) -> Packet {
+        self.keep_alive = Some(keep_alive);
+        self
+    }
+
+    fn with_client_id(mut self, client_id: String) -> Packet {
+        self.client_id = client_id;
+        self
+    }
+
+    fn with_packet_id(mut self, packet_id: u8) -> Packet {
+        self.packet_id = Some(packet_id);
+        self
+    }
+
+    fn with_topic(mut self, topic: String) -> Packet {
+        self.topic = Some(topic);
+        self
+    }
+
+    fn with_message(mut self, message: String) -> Packet {
+        self.message = Some(message);
+        self
+    }
+}
+
 struct ConnectFlags {
     username_flag: u8,
     password_flag: u8,
@@ -63,23 +113,6 @@ const PROTOCOL_NAME: &str = "MQTT";
 const PROTOCOL_LEVEL: u8 = 4; // MQTT 3.1.1
 
 impl Packet {
-    fn validate(&self) -> bool {
-        match self.packet_type {
-            PacketType::CONNECT => {
-                return true;
-            }
-            PacketType::PUBLISH => {
-                if self.message.is_none() {
-                    return false;
-                }
-            }
-            PacketType::PINGREQ => {}
-            _ => {}
-        }
-
-        true
-    }
-
     fn to_raw_packet(&self) -> RawPacket {
         let mut packet = RawPacket {
             fixed_header: Vec::new(),
@@ -199,48 +232,29 @@ impl Packet {
 }
 
 pub fn craft_connect_packet(username: Option<String>, password: Option<String>) -> Vec<u8> {
-    let packet = Packet {
-        packet_type: PacketType::CONNECT,
-        username: username,
-        password: password,
-        keep_alive: Some(Duration::from_secs(10)),
-        client_id: "rust".to_string(),
-        packet_id: None,
-        topic: None,
-        message: None,
-    };
-
-    packet.to_raw_packet().to_bytes()
+    Packet::new(PacketType::CONNECT)
+        .with_client_id("rust".to_string())
+        .with_keep_alive(Duration::from_secs(10))
+        .with_username(username.unwrap_or("".to_string()))
+        .with_password(password.unwrap_or("".to_string()))
+        .to_raw_packet()
+        .to_bytes()
 }
 
 pub fn craft_publish_packet(topic: String, payload: String) -> Vec<u8> {
-    let packet = Packet {
-        packet_type: PacketType::PUBLISH,
-        username: None,
-        password: None,
-        keep_alive: None,
-        client_id: "rust".to_string(),
-        packet_id: None,
-        topic: Some(topic),
-        message: Some(payload),
-    };
-
-    packet.to_raw_packet().to_bytes()
+    Packet::new(PacketType::PUBLISH)
+        .with_client_id("rust".to_string())
+        .with_topic(topic)
+        .with_message(payload)
+        .to_raw_packet()
+        .to_bytes()
 }
 
 pub fn craft_pingreq_packet() -> Vec<u8> {
-    let packet = Packet {
-        packet_type: PacketType::PINGREQ,
-        username: None,
-        password: None,
-        keep_alive: None,
-        client_id: "rust".to_string(),
-        packet_id: None,
-        topic: None,
-        message: None,
-    };
-
-    packet.to_raw_packet().to_bytes()
+    Packet::new(PacketType::PINGREQ)
+        .with_client_id("rust".to_string())
+        .to_raw_packet()
+        .to_bytes()
 }
 
 #[derive(Debug)]
