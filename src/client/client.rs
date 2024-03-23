@@ -59,9 +59,15 @@ impl Client {
     async fn even_loop(&mut self) {
         let mut publish_channel_receiver = self.publish_channel_receiver.take().unwrap();
 
+        // Broker connection loop
         loop {
-            // Connect to the MQTT broker
             match TcpStream::connect(self.broker_address.clone()).await {
+                Err(e) => {
+                    eprintln!("Failed to connect to MQTT broker: {}", e);
+
+                    // Retry connection after 5 seconds
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
                 Ok(mut stream) => {
                     println!("Connected to MQTT broker successfully.");
 
@@ -72,6 +78,7 @@ impl Client {
 
                     let mut ping_interval = time::interval(time::Duration::from_secs(10));
 
+                    // Event loop
                     loop {
                         tokio::select! {
                             _ = ping_interval.tick() => {
@@ -115,12 +122,6 @@ impl Client {
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    eprintln!("Failed to connect to MQTT broker: {}", e);
-
-                    // Retry connection after 5 seconds
-                    tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
         }
