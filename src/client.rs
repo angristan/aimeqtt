@@ -20,6 +20,7 @@ pub struct Client {
 }
 
 pub async fn new(broker_address: &str) -> Client {
+    //TODO: username, password, client_id, keep_alive
     let broker_address = broker_address.to_string();
 
     let (publish_channel_sender, publish_channel_receiver) = mpsc::unbounded_channel();

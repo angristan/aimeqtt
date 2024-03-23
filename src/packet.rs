@@ -1,9 +1,26 @@
 // Ref: https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html
 
-// Connect Flags
-// Bit	7	            6	            5	            4 3	        2           1	            0
-//      username flag	password flag   Will retain     Will QoS    Will flag	Clean session   reserved
-//      x	            x	            x	            xx	        x	        x	           	0
+use std::time::Duration;
+
+#[derive(Clone)]
+enum PacketType {
+    CONNECT = 1,
+    CONNACK = 2,
+    PUBLISH = 3,
+    PINGREQ = 12,
+    PINGRESP = 13,
+}
+
+struct Packet {
+    packet_type: PacketType,
+    username: Option<String>,
+    password: Option<String>,
+    keep_alive: Option<Duration>,
+    client_id: String,
+    packet_id: Option<u8>,
+    message: Option<String>,
+}
+
 struct ConnectFlags {
     username_flag: u8,
     password_flag: u8,
@@ -41,100 +58,177 @@ impl RawPacket {
     }
 }
 
+const PROTOCOL_NAME: &str = "MQTT";
+const PROTOCOL_LEVEL: u8 = 4; // MQTT 3.1.1
+
+impl Packet {
+    fn validate(&self) -> bool {
+        match self.packet_type {
+            PacketType::CONNECT => {
+                return true;
+            }
+            PacketType::PUBLISH => {
+                if self.message.is_none() {
+                    return false;
+                }
+            }
+            PacketType::PINGREQ => {}
+            _ => {}
+        }
+
+        true
+    }
+
+    fn to_raw_packet(&self) -> RawPacket {
+        let mut packet = RawPacket {
+            fixed_header: Vec::new(),
+            variable_header: Vec::new(),
+            payload: Vec::new(),
+        };
+
+        packet
+            .fixed_header
+            .push((self.packet_type.clone() as u8) << 4); // Packet Type
+
+        match self.packet_type {
+            PacketType::CONNECT => {
+                packet.variable_header.push(0x00); // Protocol Name Length MSB
+                packet.variable_header.push(PROTOCOL_NAME.len() as u8); // Protocol Name Length LSB
+                packet
+                    .variable_header
+                    .extend_from_slice(PROTOCOL_NAME.as_bytes()); // Protocol Name
+
+                packet.variable_header.push(PROTOCOL_LEVEL); // Protocol Level
+
+                let connect_flags = ConnectFlags {
+                    username_flag: if self.username.is_some() { 1 } else { 0 },
+                    password_flag: if self.password.is_some() { 1 } else { 0 },
+                    will_retain: 0,
+                    will_qos: 0,
+                    will_flag: 0,
+                    clean_session: 1,
+                };
+                packet.variable_header.push(connect_flags.to_byte());
+
+                // Keep Alive
+                packet.variable_header.push(0x00); // Keep Alive MSB
+                packet
+                    .variable_header
+                    .push(u8::from_be(self.keep_alive.unwrap().as_secs() as u8)); // Keep Alive LSB
+
+                // Client id
+                packet.payload.push(0x00); // Client ID Length MSB
+                packet.payload.push(self.client_id.len() as u8); // Client ID Length LSB
+                packet.payload.extend_from_slice(self.client_id.as_bytes()); // Client ID
+
+                // Auth
+                if self.username.is_some() {
+                    packet
+                        .payload
+                        .extend_from_slice(self.username.as_ref().unwrap().as_bytes());
+                }
+                if self.password.is_some() {
+                    packet.payload.push(0x00); // Password Length MSB
+                    packet
+                        .payload
+                        .push(self.password.as_ref().unwrap().len() as u8); // Password Length LSB
+                    packet
+                        .payload
+                        .extend_from_slice(self.password.as_ref().unwrap().as_bytes());
+                }
+            }
+            PacketType::PUBLISH => {
+                packet.variable_header.push(0x00); // Topic name Length MSB
+                packet.variable_header.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
+                packet.variable_header.extend_from_slice(b"a/b"); // Topic Name
+
+                // Packet Identifier - optional for QoS 0
+                // packet.variable_header.push(0x00); // Packet Identifier MSB
+                // packet.variable_header.push(self.packet_id.unwrap() as u8); // Packet Identifier LSB
+
+                packet
+                    .payload
+                    .extend_from_slice(self.message.as_ref().unwrap().as_bytes());
+            }
+            _ => {}
+        }
+
+        match packet.variable_header.len() + packet.payload.len() {
+            0 => packet.fixed_header.push(0x00),
+            _ => {
+                // Compute "Remaining Length" field of the fixed header
+                let mut remaining_length = packet.variable_header.len() + packet.payload.len();
+
+                // Encode the "Remaining Length" field as per MQTT protocol specification:
+                /*
+                   The Remaining Length is encoded using a variable length encoding scheme which uses a single byte for values up to 127.
+                   Larger values are handled as follows. The least significant seven bits of each byte encode the data,
+                   and the most significant bit is used to indicate that there are following bytes in the representation.
+                   Thus each byte encodes 128 values and a "continuation bit". The maximum number of bytes in the Remaining Length field is four.
+
+                   This allows applications to send Control Packets of size up to 268,435,455 (256 MB)
+                */
+                let mut encoded_bytes: Vec<u8> = vec![];
+                while remaining_length > 0 {
+                    let mut byte = (remaining_length % 128) as u8;
+                    remaining_length /= 128;
+                    if remaining_length > 0 {
+                        byte |= u8::from_be(128);
+                    }
+                    encoded_bytes.push(byte);
+                }
+
+                // Add the encoded bytes (1 up to 4) representing the "Remaining Length" field, starting from the second byte of the fixed header
+                packet
+                    .fixed_header
+                    .splice(1..1, encoded_bytes.iter().cloned());
+            }
+        }
+
+        packet
+    }
+}
+
 pub fn craft_connect_packet() -> Vec<u8> {
-    // Construct the CONNECT packet according to MQTT protocol specification
-    let mut packet = RawPacket {
-        fixed_header: Vec::new(),
-        variable_header: Vec::new(),
-        payload: Vec::new(),
+    let packet = Packet {
+        packet_type: PacketType::CONNECT,
+        username: None,
+        password: None,
+        keep_alive: Some(Duration::from_secs(10)),
+        client_id: "rust".to_string(),
+        packet_id: None,
+        message: None,
     };
 
-    // Fixed header (CONNECT)
-    packet.fixed_header.push(u8::from_be_bytes([0b0001_0000])); // CONNECT message type
-    packet.fixed_header.push(0x00); // Remaining Length (variable header + payload) -- placeholder, will be computed later
-
-    packet.variable_header.push(0x00); // Protocol Name Length MSB
-    packet.variable_header.push(0x04); // Protocol Name Length LSB
-    packet.variable_header.extend_from_slice(b"MQTT"); // Protocol Name
-
-    packet.variable_header.push(0x04); // Protocol Level (4 for MQTT 3.1.1)
-
-    let connect_flags = ConnectFlags {
-        username_flag: 0,
-        password_flag: 0,
-        will_retain: 0,
-        will_qos: 0,
-        will_flag: 0,
-        clean_session: 1,
-    };
-    packet.variable_header.push(connect_flags.to_byte());
-
-    // Keep Alive
-    packet.variable_header.push(0x00); // Keep Alive MSB
-    packet.variable_header.push(u8::from_be(10)); // Keep Alive LSB (10 seconds)
-
-    // Client id
-    packet.payload.push(0x00); // Client ID Length MSB
-    packet.payload.push(0x04); // Client ID Length LSB //TODO: compute this dynamically
-    packet.payload.extend_from_slice(b"rust"); // Client IDs
-
-    // Compute "Remaining Length" field of the fixed header: length of variable header + payload
-    let remaining_length = packet.variable_header.len() + packet.payload.len();
-    packet.fixed_header[1] = remaining_length as u8;
-
-    packet.to_bytes()
+    packet.to_raw_packet().to_bytes()
 }
 
 pub fn craft_publish_packet(payload: String) -> Vec<u8> {
-    // Construct the PUBLISH packet according to MQTT protocol specification
-    let mut packet = RawPacket {
-        fixed_header: Vec::new(),
-        variable_header: Vec::new(),
-        payload: Vec::new(),
+    let packet = Packet {
+        packet_type: PacketType::PUBLISH,
+        username: None,
+        password: None,
+        keep_alive: None,
+        client_id: "rust".to_string(),
+        packet_id: None,
+        message: Some(payload),
     };
 
-    packet.fixed_header.push(u8::from_be_bytes([0b0011_0000])); // PUBLISH message type (0011 + DUP + QoS Level + RETAIN
+    packet.to_raw_packet().to_bytes()
+}
 
-    // <Here should be the 'Remaining Length' field>
+pub fn craft_pingreq_packet() -> Vec<u8> {
+    let packet = Packet {
+        packet_type: PacketType::PINGREQ,
+        username: None,
+        password: None,
+        keep_alive: None,
+        client_id: "rust".to_string(),
+        packet_id: None,
+        message: None,
+    };
 
-    packet.variable_header.push(0x00); // Topic name Length MSB
-    packet.variable_header.push(0x03); // Topic name Length LSB //TODO: compute this dynamically
-    packet.variable_header.extend_from_slice(b"a/b"); // Topic Name
-
-    // Packet Identifier - optional for QoS 0
-    packet.variable_header.push(0x00); // Packet Identifier MSB
-    packet.variable_header.push(0x00); // Packet Identifier LSB
-
-    packet.payload.extend_from_slice(payload.as_bytes()); // Payload
-
-    // Compute "Remaining Length" field of the fixed header
-    let mut remaining_length = packet.variable_header.len() + packet.payload.len();
-
-    // Encode the "Remaining Length" field as per MQTT protocol specification:
-    /*
-       The Remaining Length is encoded using a variable length encoding scheme which uses a single byte for values up to 127.
-       Larger values are handled as follows. The least significant seven bits of each byte encode the data,
-       and the most significant bit is used to indicate that there are following bytes in the representation.
-       Thus each byte encodes 128 values and a "continuation bit". The maximum number of bytes in the Remaining Length field is four.
-
-       This allows applications to send Control Packets of size up to 268,435,455 (256 MB)
-    */
-    let mut encoded_bytes: Vec<u8> = vec![];
-    while remaining_length > 0 {
-        let mut byte = (remaining_length % 128) as u8;
-        remaining_length /= 128;
-        if remaining_length > 0 {
-            byte |= u8::from_be(128);
-        }
-        encoded_bytes.push(byte);
-    }
-
-    // Add the encoded bytes (1 up to 4) representing the "Remaining Length" field, starting from the second byte of the fixed header
-    packet
-        .fixed_header
-        .splice(1..1, encoded_bytes.iter().cloned());
-
-    packet.to_bytes()
+    packet.to_raw_packet().to_bytes()
 }
 
 #[derive(Debug)]
@@ -193,20 +287,6 @@ pub fn parse_incoming_packet(packet: &[u8]) {
     }
 }
 
-pub fn craft_pingreq_packet() -> Vec<u8> {
-    // Construct the PINGREQ packet according to MQTT protocol specification
-    let mut packet = RawPacket {
-        fixed_header: Vec::new(),
-        variable_header: Vec::new(),
-        payload: Vec::new(),
-    };
-
-    packet.fixed_header.push(u8::from_be_bytes([0b1100_0000])); // PINGREQ message type
-    packet.fixed_header.push(0x00); // Remaining Length
-
-    packet.to_bytes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,7 +296,22 @@ mod tests {
         let packet = craft_connect_packet();
         assert_eq!(
             packet,
-            vec![16, 16, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 4, 114, 117, 115, 116]
+            vec![16, 16, 0, 4, 77, 81, 84, 84, 4, 2, 0, 10, 0, 4, 114, 117, 115, 116]
         );
+    }
+
+    #[test]
+    fn test_craft_publish_packet() {
+        let packet = craft_publish_packet("Hello, MQTT!".to_string());
+        assert_eq!(
+            packet,
+            vec![48, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33]
+        );
+    }
+
+    #[test]
+    fn test_craft_pingreq_packet() {
+        let packet = craft_pingreq_packet();
+        assert_eq!(packet, vec![192, 0]);
     }
 }
