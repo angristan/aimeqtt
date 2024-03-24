@@ -89,7 +89,7 @@ pub async fn new(options: ClientOptions) -> Client {
     let cloned_client = client.clone(); // client without receivers, to be used outside
 
     task::spawn(async move {
-        client.even_loop().await;
+        client.event_loop().await;
     });
 
     cloned_client
@@ -113,7 +113,7 @@ impl Client {
         }
     }
 
-    async fn even_loop(&mut self) {
+    async fn event_loop(&mut self) {
         let mut publish_channel_receiver = self.publish_channel_receiver.take().unwrap();
 
         // Broker connection loop
