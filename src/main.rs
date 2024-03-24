@@ -4,16 +4,10 @@ mod packet;
 
 #[tokio::main]
 async fn main() {
-    let broker_address = "127.0.0.1";
+    let broker_host = "127.0.0.1";
     let broker_port = 1883;
-    let username = None;
-    let password = None;
 
-    let mqtt_client_options = client::ClientOptions::new(broker_address.to_string(), broker_port)
-        .with_credentials(
-            username.unwrap_or("".to_string()),
-            password.unwrap_or("".to_string()),
-        )
+    let mqtt_client_options = client::ClientOptions::new(broker_host.to_string(), broker_port)
         .with_keep_alive(60)
         .with_callback_handler(callback_handler);
 
