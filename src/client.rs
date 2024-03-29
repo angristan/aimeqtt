@@ -4,6 +4,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::Interest;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::task;
 use tokio::time;
 
@@ -25,9 +26,12 @@ pub struct Client {
     callback_handler: Option<fn(String)>,
 }
 
+type Responder<T> = oneshot::Sender<Result<T, mpsc::error::SendError<Vec<u8>>>>;
+
 pub struct PublishRequest {
     pub topic: String,
     pub payload: String,
+    pub responder: Responder<()>,
 }
 
 pub struct ClientOptions {
@@ -152,10 +156,16 @@ impl Client {
                                     Err(e) => eprintln!("Failed to send PINGREQ message: {}", e),
                                 }
                             }
-                            Some(msg) = publish_channel_receiver.recv() => {
-                                match self.send_publish_packet(msg.topic, msg.payload) {
-                                    Ok(_) => println!("PUBLISH message sent successfully."),
-                                    Err(e) => eprintln!("Failed to send PUBLISH message: {}", e),
+                            Some(publish_req) = publish_channel_receiver.recv() => {
+                                match self.send_publish_packet(publish_req.topic, publish_req.payload) {
+                                    Ok(_) => {
+                                        println!("PUBLISH message sent successfully.");
+                                        let _ = publish_req.responder.send(Ok(()));
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Failed to send PUBLISH message: {}", e);
+                                        let _ = publish_req.responder.send(Err(e));
+                                    },
                                 }
                             }
                             Some(packet) = self.raw_tcp_channel_receiver.as_mut().unwrap().recv() => {
@@ -211,9 +221,13 @@ impl Client {
         &self,
         topic: String,
         payload: String,
+        responder: Responder<()>,
     ) -> Result<(), mpsc::error::SendError<PublishRequest>> {
-        self.publish_channel_sender
-            .send(PublishRequest { topic, payload })
+        self.publish_channel_sender.send(PublishRequest {
+            topic,
+            payload,
+            responder,
+        })
     }
 
     pub fn subscribe(

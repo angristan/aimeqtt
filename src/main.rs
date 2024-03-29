@@ -1,4 +1,6 @@
 use std::time::Duration;
+
+use tokio::sync::oneshot;
 mod client;
 mod packet;
 
@@ -18,9 +20,17 @@ async fn main() {
         .expect("Failed to subscribe to topic.");
 
     loop {
+        let (resp_tx, resp_rx) = oneshot::channel();
+
         mqtt_client
-            .publish("a/b".to_string(), "msg".to_string())
-            .expect("Failed to send message to client thread.");
+            .publish("a/b".to_string(), "msg".to_string(), resp_tx)
+            .expect("Failed to send message to client");
+
+        let res = resp_rx
+            .await
+            .expect("Failed to receive response from client thread.");
+
+        res.expect("Failed to publish message.");
 
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
