@@ -34,6 +34,11 @@ pub struct PublishRequest {
     pub responder: Responder<()>,
 }
 
+#[derive(Debug)]
+pub enum ClientError {
+    InternalError,
+}
+
 pub struct ClientOptions {
     pub broker_host: String,
     pub broker_port: u16,
@@ -217,17 +222,32 @@ impl Client {
         }
     }
 
-    pub fn publish(
-        &self,
-        topic: String,
-        payload: String,
-        responder: Responder<()>,
-    ) -> Result<(), mpsc::error::SendError<PublishRequest>> {
-        self.publish_channel_sender.send(PublishRequest {
-            topic,
-            payload,
-            responder,
-        })
+    pub async fn publish(&self, topic: String, payload: String) -> Result<(), ClientError> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+
+        self.publish_channel_sender
+            .send(PublishRequest {
+                topic,
+                payload,
+                responder: resp_tx,
+            })
+            .map_err(|e| {
+                eprintln!("Failed to send PUBLISH request to event loop: {}", e);
+                ClientError::InternalError
+            })?;
+
+        resp_rx
+            .await
+            .map_err(|e| {
+                eprintln!("Failed to receive response from event loop: {}", e);
+                ClientError::InternalError
+            })?
+            .map_err(|e| {
+                eprintln!("Failed to publish message: {}", e);
+                ClientError::InternalError
+            })?;
+
+        Ok(())
     }
 
     pub fn subscribe(
