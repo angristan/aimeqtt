@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::task;
 use tokio::time;
+use tracing::event;
+use tracing::Level;
 
 pub struct Client {
     broker_address: String,
@@ -129,13 +131,13 @@ impl Client {
         loop {
             match TcpStream::connect(self.broker_address.clone()).await {
                 Err(e) => {
-                    eprintln!("Failed to connect to MQTT broker: {}", e);
+                    event!(Level::ERROR, "Failed to connect to MQTT broker: {}", e);
 
                     // Retry connection after 5 seconds
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
                 Ok(mut stream) => {
-                    println!("Connected to MQTT broker successfully.");
+                    event!(Level::DEBUG, "Connected to MQTT broker successfully.");
 
                     let connect_packet = crate::packet::craft_connect_packet(
                         self.username.clone(),
@@ -143,8 +145,8 @@ impl Client {
                     );
 
                     match stream.write(&connect_packet).await {
-                        Ok(_) => println!("CONNECT message sent successfully."),
-                        Err(e) => eprintln!("Failed to send CONNECT message: {}", e),
+                        Ok(_) => event!(Level::DEBUG, "CONNECT message sent successfully."),
+                        Err(e) => event!(Level::ERROR, "Failed to send CONNECT message: {}", e),
                     }
 
                     // Send PINGREQ at least once every keep_alive seconds
@@ -157,26 +159,26 @@ impl Client {
                         tokio::select! {
                             _ = ping_interval.tick() => {
                                 match self.send_pingreq_packet() {
-                                    Ok(_) => println!("PINGREQ message sent successfully."),
-                                    Err(e) => eprintln!("Failed to send PINGREQ message: {}", e),
+                                    Ok(_) => event!(Level::DEBUG, "PINGREQ message sent successfully."),
+                                    Err(e) => event!(Level::ERROR, "Failed to send PINGREQ message: {}", e),
                                 }
                             }
                             Some(publish_req) = publish_channel_receiver.recv() => {
                                 match self.send_publish_packet(publish_req.topic, publish_req.payload) {
                                     Ok(_) => {
-                                        println!("PUBLISH message sent successfully.");
+                                        event!(Level::DEBUG, "PUBLISH message sent successfully.");
                                         let _ = publish_req.responder.send(Ok(()));
                                     },
                                     Err(e) => {
-                                        eprintln!("Failed to send PUBLISH message: {}", e);
+                                        event!(Level::ERROR, "Failed to send PUBLISH message: {}", e);
                                         let _ = publish_req.responder.send(Err(e));
                                     },
                                 }
                             }
                             Some(packet) = self.raw_tcp_channel_receiver.as_mut().unwrap().recv() => {
                                 match stream.write(&packet).await {
-                                    Ok(_) => println!("Raw TCP packet sent successfully."),
-                                    Err(e) => eprintln!("Failed to send raw TCP packet: {}", e),
+                                    Ok(_) => event!(Level::DEBUG, "Raw TCP packet sent successfully."),
+                                    Err(e) => event!(Level::ERROR, "Failed to send raw TCP packet: {}", e),
                                 }
                             }
                             _ = stream.ready(Interest::READABLE) => {
@@ -184,7 +186,7 @@ impl Client {
                                 match stream.try_read(&mut response) {
                                     Ok(n) => {
                                         if n == 0 {
-                                            println!("Broker closed the connection.");
+                                            event!(Level::DEBUG, "Broker closed the connection.");
                                             break;
                                         }
 
@@ -203,14 +205,14 @@ impl Client {
                                             }
                                             crate::packet::PacketType::SUBACK => crate::packet::parse_suback_packet(packet),
                                             crate::packet::PacketType::PINGRESP => crate::packet::parse_pingresp_packet(packet),
-                                            _ => println!("Unsupported packet type: {}", packet_type),
+                                            _ => event!(Level::DEBUG, "Unsupported packet type: {}", packet_type),
                                         }
                                     }
                                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                                         continue;
                                     }
                                     Err(e) => {
-                                        eprintln!("Failed to read broker response: {}", e);
+                                        event!(Level::ERROR, "Failed to read broker response: {}", e);
                                         break;
                                     }
                                 }
@@ -232,18 +234,26 @@ impl Client {
                 responder: resp_tx,
             })
             .map_err(|e| {
-                eprintln!("Failed to send PUBLISH request to event loop: {}", e);
+                event!(
+                    Level::ERROR,
+                    "Failed to send PUBLISH request to event loop: {}",
+                    e
+                );
                 ClientError::InternalError
             })?;
 
         resp_rx
             .await
             .map_err(|e| {
-                eprintln!("Failed to receive response from event loop: {}", e);
+                event!(
+                    Level::ERROR,
+                    "Failed to receive response from event loop: {}",
+                    e
+                );
                 ClientError::InternalError
             })?
             .map_err(|e| {
-                eprintln!("Failed to publish message: {}", e);
+                event!(Level::ERROR, "Failed to publish message: {}", e);
                 ClientError::InternalError
             })?;
 

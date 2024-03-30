@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use tracing::{event, Level};
+
 #[derive(Clone)]
 pub enum PacketType {
     CONNECT = 1,
@@ -335,8 +337,9 @@ pub fn parse_connack_packet(packet: &[u8]) {
     let connack_flags = packet[2];
     let connack_return_code = packet[3];
 
-    println!("CONNACK Flags: {:08b}", connack_flags); // all bites to 0, last bit is session present
-    println!(
+    event!(Level::DEBUG, "CONNACK Flags: {:08b}", connack_flags); // all bites to 0, last bit is session present
+    event!(
+        Level::DEBUG,
         "CONNACK Return Code: {:?}",
         ConnackReturnCode::from(connack_return_code)
     );
@@ -344,11 +347,11 @@ pub fn parse_connack_packet(packet: &[u8]) {
 
 pub fn parse_pingresp_packet(packet: &[u8]) {
     if packet[0] != 0b1101_0000 {
-        eprintln!("Invalid PINGRESP packet.");
+        event!(Level::ERROR, "Invalid PINGRESP packet.");
     }
 
     // Parse the PINGRESP packet according to MQTT protocol specification
-    println!("PINGRESP packet received.");
+    event!(Level::DEBUG, "PINGRESP packet received.");
 }
 
 pub fn parse_suback_packet(packet: &[u8]) {
@@ -356,8 +359,8 @@ pub fn parse_suback_packet(packet: &[u8]) {
     let packet_id = (packet[2] as u16) << 8 | packet[3] as u16;
     let return_code = packet[4];
 
-    println!("SUBACK Packet ID: {}", packet_id);
-    println!("SUBACK Return Code: {}", return_code);
+    event!(Level::DEBUG, "SUBACK Packet ID: {}", packet_id);
+    event!(Level::DEBUG, "SUBACK Return Code: {}", return_code);
 }
 
 pub fn parse_publish_packet(packet: &[u8]) -> (String, String) {
@@ -367,8 +370,8 @@ pub fn parse_publish_packet(packet: &[u8]) -> (String, String) {
 
     let message = std::str::from_utf8(&packet[(4 + topic_length as usize)..]).unwrap();
 
-    println!("PUBLISH Topic: {}", topic);
-    println!("PUBLISH Message: {}", message);
+    event!(Level::DEBUG, "PUBLISH Topic: {}", topic);
+    event!(Level::DEBUG, "PUBLISH Message: {}", message);
 
     (topic.to_string(), message.to_string())
 }
