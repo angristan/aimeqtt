@@ -10,6 +10,17 @@ use tokio::time;
 use tracing::event;
 use tracing::Level;
 
+pub struct PublishRequest {
+    pub topic: String,
+    pub payload: String,
+    pub responder: Responder<()>,
+}
+
+#[derive(Debug)]
+pub enum ClientError {
+    InternalError,
+}
+
 pub struct Client {
     broker_address: String,
     keep_alive: u16,
@@ -30,64 +41,81 @@ pub struct Client {
 
 type Responder<T> = oneshot::Sender<Result<T, mpsc::error::SendError<Vec<u8>>>>;
 
-pub struct PublishRequest {
-    pub topic: String,
-    pub payload: String,
-    pub responder: Responder<()>,
+#[derive(Default)]
+pub struct ClientOptions<H, P> {
+    broker_host: H,
+    broker_port: P,
+    username: Option<String>,
+    password: Option<String>,
+    keep_alive: Option<u16>,
+    callback_handler: Option<fn(String)>,
 }
 
-#[derive(Debug)]
-pub enum ClientError {
-    InternalError,
+#[derive(Default, Clone)]
+pub struct MissingBroker;
+#[derive(Default, Clone)]
+pub struct Broker(String);
+
+#[derive(Default, Clone)]
+pub struct MissingPort;
+#[derive(Default, Clone)]
+pub struct Port(u16);
+
+impl ClientOptions<MissingBroker, MissingPort> {
+    pub fn new() -> Self {
+        ClientOptions::default()
+    }
 }
 
-pub struct ClientOptions {
-    pub broker_host: String,
-    pub broker_port: u16,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub keep_alive: u16,
-    pub callback_handler: Option<fn(String)>,
-}
-
-impl ClientOptions {
-    pub fn new(broker_host: String, broker_port: u16) -> ClientOptions {
+impl<B, P> ClientOptions<B, P> {
+    pub fn with_broker_host(self, broker_host: String) -> ClientOptions<Broker, P> {
         ClientOptions {
-            broker_host,
-            broker_port,
-            username: None,
-            password: None,
-            keep_alive: 60,
-            callback_handler: None,
+            broker_host: Broker(broker_host),
+            broker_port: self.broker_port,
+            username: self.username,
+            password: self.password,
+            keep_alive: self.keep_alive,
+            callback_handler: self.callback_handler,
         }
     }
 
-    pub fn with_credentials(mut self, username: String, password: String) -> ClientOptions {
+    pub fn with_broker_port(self, broker_port: u16) -> ClientOptions<B, Port> {
+        ClientOptions {
+            broker_host: self.broker_host,
+            broker_port: Port(broker_port),
+            username: self.username,
+            password: self.password,
+            keep_alive: self.keep_alive,
+            callback_handler: self.callback_handler,
+        }
+    }
+
+    pub fn with_credentials(mut self, username: String, password: String) -> ClientOptions<B, P> {
         self.username = Some(username);
         self.password = Some(password);
         self
     }
 
-    pub fn with_keep_alive(mut self, keep_alive: u16) -> ClientOptions {
-        self.keep_alive = keep_alive;
+    pub fn with_keep_alive(mut self, keep_alive: u16) -> ClientOptions<B, P> {
+        self.keep_alive = Some(keep_alive);
         self
     }
 
-    pub fn with_callback_handler(mut self, callback_handler: fn(String)) -> ClientOptions {
+    pub fn with_callback_handler(mut self, callback_handler: fn(String)) -> ClientOptions<B, P> {
         self.callback_handler = Some(callback_handler);
         self
     }
 }
 
-pub async fn new(options: ClientOptions) -> Client {
-    let broker_address = format!("{}:{}", options.broker_host, options.broker_port);
+pub async fn new(options: ClientOptions<Broker, Port>) -> Client {
+    let broker_address = format!("{}:{}", options.broker_host.0, options.broker_port.0);
 
     let (publish_channel_sender, publish_channel_receiver) = mpsc::unbounded_channel();
     let (raw_tcp_channel_sender, raw_tcp_channel_receiver) = mpsc::unbounded_channel();
 
     let mut client = Client {
         broker_address,
-        keep_alive: options.keep_alive,
+        keep_alive: options.keep_alive.unwrap_or(60),
         username: options.username,
         password: options.password,
         publish_channel_sender,

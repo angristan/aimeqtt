@@ -8,7 +8,9 @@ async fn main() {
     let broker_host = "127.0.0.1";
     let broker_port = 1883;
 
-    let mqtt_client_options = client::ClientOptions::new(broker_host.to_string(), broker_port)
+    let mqtt_client_options = client::ClientOptions::new()
+        .with_broker_host(broker_host.to_string())
+        .with_broker_port(broker_port)
         .with_keep_alive(60)
         .with_callback_handler(callback_handler);
 
@@ -29,5 +31,5 @@ async fn main() {
 }
 
 fn callback_handler(payload: String) {
-    println!("Received message: {}", payload);
+    println!("Received message: {payload}");
 }
