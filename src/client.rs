@@ -134,8 +134,8 @@ pub async fn new(options: ClientOptions<Broker, Port>) -> Client {
     cloned_client
 }
 
-impl Client {
-    pub fn clone(&self) -> Client {
+impl Clone for Client {
+    fn clone(&self) -> Self {
         Client {
             broker_address: self.broker_address.clone(),
             keep_alive: self.keep_alive,
@@ -151,7 +151,9 @@ impl Client {
             raw_tcp_channel_receiver: None,
         }
     }
+}
 
+impl Client {
     async fn event_loop(&mut self) {
         let mut publish_channel_receiver = self.publish_channel_receiver.take().unwrap();
 
