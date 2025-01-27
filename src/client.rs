@@ -10,6 +10,8 @@ use tokio::time;
 use tracing::event;
 use tracing::Level;
 
+use crate::error::MqttError;
+
 pub struct PublishRequest {
     pub topic: String,
     pub payload: String,
@@ -157,99 +159,145 @@ impl Client {
     async fn event_loop(&mut self) {
         let mut publish_channel_receiver = self.publish_channel_receiver.take().unwrap();
 
-        // Broker connection loop
         loop {
-            match TcpStream::connect(self.broker_address.clone()).await {
-                Err(e) => {
-                    event!(Level::ERROR, "Failed to connect to MQTT broker: {}", e);
-
-                    // Retry connection after 5 seconds
+            match self.connect_to_broker().await {
+                Ok(mut stream) => {
+                    if let Err(e) = self
+                        .handle_connection(&mut stream, &mut publish_channel_receiver)
+                        .await
+                    {
+                        event!(Level::ERROR, "Connection error: {}", e);
+                    }
+                    // Retry connection after error
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
-                Ok(mut stream) => {
-                    event!(Level::DEBUG, "Connected to MQTT broker successfully.");
+                Err(e) => {
+                    event!(Level::ERROR, "Failed to connect to MQTT broker: {}", e);
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
 
-                    let connect_packet = crate::packet::craft_connect_packet(
-                        self.username.clone(),
-                        self.password.clone(),
-                    );
+    async fn connect_to_broker(&self) -> std::io::Result<TcpStream> {
+        let mut stream = TcpStream::connect(self.broker_address.clone()).await?;
+        event!(Level::DEBUG, "Connected to MQTT broker successfully.");
 
-                    match stream.write(&connect_packet).await {
-                        Ok(_) => event!(Level::DEBUG, "CONNECT message sent successfully."),
-                        Err(e) => event!(Level::ERROR, "Failed to send CONNECT message: {}", e),
-                    }
+        let connect_packet =
+            crate::packet::craft_connect_packet(self.username.clone(), self.password.clone());
 
-                    // Send PINGREQ at least once every keep_alive seconds
-                    // so the broker knows the client is still alive
-                    let mut ping_interval =
-                        time::interval(Duration::from_secs(self.keep_alive as u64) / 2);
+        stream.write_all(&connect_packet).await?;
+        event!(Level::DEBUG, "CONNECT message sent successfully.");
 
-                    // Event loop
-                    loop {
-                        tokio::select! {
-                            _ = ping_interval.tick() => {
-                                match self.send_pingreq_packet() {
-                                    Ok(_) => event!(Level::DEBUG, "PINGREQ message sent successfully."),
-                                    Err(e) => event!(Level::ERROR, "Failed to send PINGREQ message: {}", e),
-                                }
-                            }
-                            Some(publish_req) = publish_channel_receiver.recv() => {
-                                match self.send_publish_packet(publish_req.topic, publish_req.payload) {
-                                    Ok(_) => {
-                                        event!(Level::DEBUG, "PUBLISH message sent successfully.");
-                                        let _ = publish_req.responder.send(Ok(()));
-                                    },
-                                    Err(e) => {
-                                        event!(Level::ERROR, "Failed to send PUBLISH message: {}", e);
-                                        let _ = publish_req.responder.send(Err(e));
-                                    },
-                                }
-                            }
-                            Some(packet) = self.raw_tcp_channel_receiver.as_mut().unwrap().recv() => {
-                                match stream.write(&packet).await {
-                                    Ok(_) => event!(Level::DEBUG, "Raw TCP packet sent successfully."),
-                                    Err(e) => event!(Level::ERROR, "Failed to send raw TCP packet: {}", e),
-                                }
-                            }
-                            _ = stream.ready(Interest::READABLE) => {
-                                let mut response = [0; 128];
-                                match stream.try_read(&mut response) {
-                                    Ok(n) => {
-                                        if n == 0 {
-                                            event!(Level::DEBUG, "Broker closed the connection.");
-                                            break;
-                                        }
+        Ok(stream)
+    }
 
-                                        let packet = &response[0..n];
-                                        // Parse the incoming packet according to MQTT protocol specification
-                                        let packet_type = packet[0] >> 4;
+    async fn handle_connection(
+        &mut self,
+        stream: &mut TcpStream,
+        publish_channel_receiver: &mut mpsc::UnboundedReceiver<PublishRequest>,
+    ) -> std::io::Result<()> {
+        let mut ping_interval = time::interval(Duration::from_secs(self.keep_alive as u64) / 2);
 
-                                        match crate::packet::PacketType::from(packet_type) {
-                                            crate::packet::PacketType::CONNACK => crate::packet::parse_connack_packet(packet),
-                                            crate::packet::PacketType::PUBLISH => {
-                                                let (_, payload) = crate::packet::parse_publish_packet(packet);
-                                                if let Some(callback_handler) = self.callback_handler {
-                                                    // TODO: this is blocking the event loop, we should run this in a separate task
-                                                    callback_handler(payload);
-                                                }
-                                            }
-                                            crate::packet::PacketType::SUBACK => crate::packet::parse_suback_packet(packet),
-                                            crate::packet::PacketType::PINGRESP => crate::packet::parse_pingresp_packet(packet),
-                                            _ => event!(Level::DEBUG, "Unsupported packet type: {}", packet_type),
-                                        }
-                                    }
-                                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                        continue;
-                                    }
-                                    Err(e) => {
-                                        event!(Level::ERROR, "Failed to read broker response: {}", e);
-                                        break;
-                                    }
-                                }
-                            }
+        loop {
+            tokio::select! {
+                _ = ping_interval.tick() => {
+                    self.handle_ping().await?;
+                }
+                Some(publish_req) = publish_channel_receiver.recv() => {
+                    self.handle_publish(publish_req).await?;
+                }
+                Some(packet) = self.raw_tcp_channel_receiver.as_mut().unwrap().recv() => {
+                    self.handle_raw_packet(stream, packet).await?;
+                }
+                _ = stream.ready(Interest::READABLE) => {
+                    match self.handle_incoming_packet(stream).await {
+                        Ok(()) => continue,
+                        Err(MqttError::ConnectionClosed) => {
+                            event!(Level::INFO, "Broker closed connection");
+                            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "Broker closed connection"));
+                        }
+                        Err(e) => {
+                            event!(Level::ERROR, "Failed to handle incoming packet: {}", e);
+                            return Err(e.into());
                         }
                     }
                 }
+            }
+        }
+    }
+
+    async fn handle_ping(&self) -> std::io::Result<()> {
+        if let Err(e) = self.send_pingreq_packet() {
+            event!(Level::ERROR, "Failed to send PINGREQ message: {}", e);
+        } else {
+            event!(Level::DEBUG, "PINGREQ message sent successfully.");
+        }
+        Ok(())
+    }
+
+    async fn handle_publish(&self, publish_req: PublishRequest) -> std::io::Result<()> {
+        let result = self.send_publish_packet(publish_req.topic, publish_req.payload);
+        match result {
+            Ok(_) => {
+                event!(Level::DEBUG, "PUBLISH message sent successfully.");
+                let _ = publish_req.responder.send(Ok(()));
+            }
+            Err(e) => {
+                event!(Level::ERROR, "Failed to send PUBLISH message: {}", e);
+                let _ = publish_req.responder.send(Err(e));
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_incoming_packet(&self, stream: &mut TcpStream) -> Result<(), MqttError> {
+        let mut response = [0; 128];
+
+        match stream.try_read(&mut response) {
+            Ok(0) => Err(MqttError::ConnectionClosed),
+            Ok(n) => {
+                if n >= response.len() {
+                    return Err(MqttError::PacketTooLarge);
+                }
+                let packet = &response[0..n];
+                self.process_packet(packet);
+                Ok(())
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn process_packet(&self, packet: &[u8]) {
+        let packet_type = packet[0] >> 4;
+        match crate::packet::PacketType::from(packet_type) {
+            crate::packet::PacketType::CONNACK => crate::packet::parse_connack_packet(packet),
+            crate::packet::PacketType::PUBLISH => {
+                let (_, payload) = crate::packet::parse_publish_packet(packet);
+                if let Some(callback_handler) = self.callback_handler {
+                    tokio::spawn(async move {
+                        callback_handler(payload);
+                    });
+                }
+            }
+            _ => event!(Level::DEBUG, "Unsupported packet type: {}", packet_type),
+        }
+    }
+
+    async fn handle_raw_packet(
+        &self,
+        stream: &mut TcpStream,
+        packet: Vec<u8>,
+    ) -> std::io::Result<()> {
+        match stream.write_all(&packet).await {
+            Ok(_) => {
+                event!(Level::DEBUG, "Raw packet sent successfully");
+                Ok(())
+            }
+            Err(e) => {
+                event!(Level::ERROR, "Failed to send raw packet: {}", e);
+                Err(e)
             }
         }
     }
