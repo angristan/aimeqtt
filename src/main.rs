@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 mod client;
+mod error;
 mod packet;
 
 #[tokio::main]
@@ -21,10 +22,13 @@ async fn main() {
         .expect("Failed to subscribe to topic.");
 
     loop {
-        mqtt_client
+        match mqtt_client
             .publish("a/b".to_string(), "msg".to_string())
             .await
-            .expect("Failed to send message to client");
+        {
+            Ok(_) => println!("Message published successfully"),
+            Err(e) => println!("Failed to publish message: {:?}", e),
+        }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
