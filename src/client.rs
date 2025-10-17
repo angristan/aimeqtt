@@ -183,8 +183,11 @@ impl Client {
         let mut stream = TcpStream::connect(self.broker_address.clone()).await?;
         event!(Level::DEBUG, "Connected to MQTT broker successfully.");
 
-        let connect_packet =
-            crate::packet::craft_connect_packet(self.username.clone(), self.password.clone());
+        let connect_packet = crate::packet::craft_connect_packet(
+            self.username.clone(),
+            self.password.clone(),
+            Duration::from_secs(self.keep_alive as u64),
+        );
 
         stream.write_all(&connect_packet).await?;
         event!(Level::DEBUG, "CONNECT message sent successfully.");

@@ -274,10 +274,14 @@ impl Packet {
     }
 }
 
-pub fn craft_connect_packet(username: Option<String>, password: Option<String>) -> Vec<u8> {
+pub fn craft_connect_packet(
+    username: Option<String>,
+    password: Option<String>,
+    keep_alive: Duration,
+) -> Vec<u8> {
     Packet::new(PacketType::CONNECT)
         .with_client_id("rust".to_string())
-        .with_keep_alive(Duration::from_secs(10))
+        .with_keep_alive(keep_alive)
         .with_username(username.unwrap_or("".to_string()))
         .with_password(password.unwrap_or("".to_string()))
         .to_raw_packet()
@@ -379,19 +383,26 @@ pub fn parse_publish_packet(packet: &[u8]) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_craft_connect_packet() {
-        let packet = craft_connect_packet(None, None);
+        let packet = craft_connect_packet(None, None, Duration::from_secs(10));
         assert_eq!(
             packet,
-            vec![16, 16, 0, 4, 77, 81, 84, 84, 4, 2, 0, 10, 0, 4, 114, 117, 115, 116]
+            vec![
+                16, 20, 0, 4, 77, 81, 84, 84, 4, 194, 0, 10, 0, 4, 114, 117, 115, 116, 0, 0, 0, 0
+            ]
         );
     }
 
     #[test]
     fn test_craft_publish_packet_auth() {
-        let packet = craft_connect_packet(Some("user".to_string()), Some("pass".to_string()));
+        let packet = craft_connect_packet(
+            Some("user".to_string()),
+            Some("pass".to_string()),
+            Duration::from_secs(10),
+        );
         assert_eq!(
             packet,
             vec![
