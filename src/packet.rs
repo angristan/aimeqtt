@@ -279,13 +279,19 @@ pub fn craft_connect_packet(
     password: Option<String>,
     keep_alive: Duration,
 ) -> Vec<u8> {
-    Packet::new(PacketType::CONNECT)
+    let mut packet = Packet::new(PacketType::CONNECT)
         .with_client_id("rust".to_string())
-        .with_keep_alive(keep_alive)
-        .with_username(username.unwrap_or("".to_string()))
-        .with_password(password.unwrap_or("".to_string()))
-        .to_raw_packet()
-        .to_bytes()
+        .with_keep_alive(keep_alive);
+
+    if let Some(username) = username {
+        packet = packet.with_username(username);
+    }
+
+    if let Some(password) = password {
+        packet = packet.with_password(password);
+    }
+
+    packet.to_raw_packet().to_bytes()
 }
 
 pub fn craft_publish_packet(topic: String, payload: String) -> Vec<u8> {
@@ -390,9 +396,7 @@ mod tests {
         let packet = craft_connect_packet(None, None, Duration::from_secs(10));
         assert_eq!(
             packet,
-            vec![
-                16, 20, 0, 4, 77, 81, 84, 84, 4, 194, 0, 10, 0, 4, 114, 117, 115, 116, 0, 0, 0, 0
-            ]
+            vec![16, 16, 0, 4, 77, 81, 84, 84, 4, 2, 0, 10, 0, 4, 114, 117, 115, 116]
         );
     }
 
