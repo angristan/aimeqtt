@@ -1,4 +1,5 @@
-use core::panic;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
 use tokio::net::TcpStream;
@@ -38,6 +39,7 @@ pub struct Client {
     raw_tcp_channel_receiver: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
 
     callback_handler: Option<fn(String)>,
+    next_packet_id: Arc<AtomicU16>,
 }
 
 type Responder<T> = oneshot::Sender<Result<T, mpsc::error::SendError<Vec<u8>>>>;
@@ -124,6 +126,7 @@ pub async fn new(options: ClientOptions<Broker, Port>) -> Client {
         raw_tcp_channel_sender,
         raw_tcp_channel_receiver: Some(raw_tcp_channel_receiver),
         callback_handler: options.callback_handler,
+        next_packet_id: Arc::new(AtomicU16::new(1)),
     };
 
     let cloned_client = client.clone(); // client without receivers, to be used outside
@@ -145,6 +148,7 @@ impl Clone for Client {
             publish_channel_sender: self.publish_channel_sender.clone(),
             raw_tcp_channel_sender: self.raw_tcp_channel_sender.clone(),
             callback_handler: self.callback_handler,
+            next_packet_id: Arc::clone(&self.next_packet_id),
 
             // we only use the receivers to feed the event loop
             // so we don't need to clone them
@@ -332,7 +336,22 @@ impl Client {
         &mut self,
         topic_filter: String,
     ) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
-        let subscribe_packet = crate::packet::craft_subscribe_packet(topic_filter);
+        let packet_id = loop {
+            let current = self.next_packet_id.load(Ordering::SeqCst);
+            let next = if current == u16::MAX { 1 } else { current + 1 };
+            match self.next_packet_id.compare_exchange(
+                current,
+                next,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break current,
+                Err(_) => continue,
+            }
+        };
+
+        let subscribe_packet =
+            crate::packet::craft_subscribe_packet(packet_id, topic_filter);
         self.raw_tcp_channel_sender.send(subscribe_packet)
     }
 

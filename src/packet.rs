@@ -37,7 +37,7 @@ struct Packet {
     password: Option<String>,
     keep_alive: Option<Duration>,
     client_id: String,
-    packet_id: Option<u8>,
+    packet_id: Option<u16>,
     topic: Option<String>,
     topic_filter: Option<String>,
     message: Option<String>,
@@ -78,7 +78,7 @@ impl Packet {
         self
     }
 
-    fn with_packet_id(mut self, packet_id: u8) -> Packet {
+    fn with_packet_id(mut self, packet_id: u16) -> Packet {
         self.packet_id = Some(packet_id);
         self
     }
@@ -217,8 +217,11 @@ impl Packet {
             PacketType::SUBSCRIBE => {
                 packet.fixed_header[0] |= 0b0000_0010; // Set QoS = 1
 
-                packet.variable_header.push(0x00); // Packet Identifier MSB
-                packet.variable_header.push(0x01); // Packet Identifier LSB
+                let packet_id = self
+                    .packet_id
+                    .expect("SUBSCRIBE packets require a packet identifier");
+                packet.variable_header.push((packet_id >> 8) as u8); // Packet Identifier MSB
+                packet.variable_header.push((packet_id & 0xFF) as u8); // Packet Identifier LSB
 
                 encode_mqtt_string(
                     &mut packet.variable_header,
@@ -302,9 +305,10 @@ pub fn craft_pingreq_packet() -> Vec<u8> {
         .to_bytes()
 }
 
-pub fn craft_subscribe_packet(topic_filter: String) -> Vec<u8> {
+pub fn craft_subscribe_packet(packet_id: u16, topic_filter: String) -> Vec<u8> {
     Packet::new(PacketType::SUBSCRIBE)
         .with_client_id("rust".to_string())
+        .with_packet_id(packet_id)
         .with_topic_filter(topic_filter)
         .to_raw_packet()
         .to_bytes()
