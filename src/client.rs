@@ -1,7 +1,6 @@
 use core::panic;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
-use tokio::io::Interest;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, Interest};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -255,21 +254,9 @@ impl Client {
     }
 
     async fn handle_incoming_packet(&self, stream: &mut TcpStream) -> Result<(), MqttError> {
-        let mut response = [0; 128];
-
-        match stream.try_read(&mut response) {
-            Ok(0) => Err(MqttError::ConnectionClosed),
-            Ok(n) => {
-                if n >= response.len() {
-                    return Err(MqttError::PacketTooLarge);
-                }
-                let packet = &response[0..n];
-                self.process_packet(packet);
-                Ok(())
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
-            Err(e) => Err(e.into()),
-        }
+        let packet = Self::read_packet(stream).await?;
+        self.process_packet(&packet);
+        Ok(())
     }
 
     fn process_packet(&self, packet: &[u8]) {
@@ -361,5 +348,57 @@ impl Client {
     ) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
         let publish_packet = crate::packet::craft_publish_packet(topic, payload);
         self.raw_tcp_channel_sender.send(publish_packet)
+    }
+
+    async fn read_packet(stream: &mut TcpStream) -> Result<Vec<u8>, MqttError> {
+        let mut fixed_header = [0u8; 1];
+        stream.read_exact(&mut fixed_header).await.map_err(Self::map_read_error)?;
+
+        let mut remaining_length: u32 = 0;
+        let mut multiplier: u32 = 1;
+        let mut length_bytes = Vec::new();
+
+        loop {
+            let mut byte = [0u8; 1];
+            stream.read_exact(&mut byte).await.map_err(Self::map_read_error)?;
+            length_bytes.push(byte[0]);
+
+            remaining_length += u32::from(byte[0] & 0x7F) * multiplier;
+            if (byte[0] & 0x80) == 0 {
+                break;
+            }
+            multiplier = multiplier.checked_mul(128).ok_or_else(|| {
+                MqttError::InvalidPacket("Remaining length multiplier overflow".to_string())
+            })?;
+            if multiplier > 128 * 128 * 128 * 128 {
+                return Err(MqttError::InvalidPacket(
+                    "Remaining length uses more than four bytes".to_string(),
+                ));
+            }
+        }
+
+        if remaining_length > 268_435_455 {
+            return Err(MqttError::InvalidPacket(
+                "Remaining length exceeds MQTT maximum".to_string(),
+            ));
+        }
+
+        let mut payload = vec![0u8; remaining_length as usize];
+        stream.read_exact(&mut payload).await.map_err(Self::map_read_error)?;
+
+        let mut packet = Vec::with_capacity(1 + length_bytes.len() + payload.len());
+        packet.push(fixed_header[0]);
+        packet.extend_from_slice(&length_bytes);
+        packet.extend_from_slice(&payload);
+
+        Ok(packet)
+    }
+
+    fn map_read_error(error: std::io::Error) -> MqttError {
+        if error.kind() == std::io::ErrorKind::UnexpectedEof {
+            MqttError::ConnectionClosed
+        } else {
+            error.into()
+        }
     }
 }
