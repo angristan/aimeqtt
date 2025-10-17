@@ -136,6 +136,16 @@ impl RawPacket {
     }
 }
 
+fn encode_mqtt_string(buffer: &mut Vec<u8>, value: &str) {
+    let length = value.len();
+    if length > u16::MAX as usize {
+        panic!("MQTT string length {length} exceeds two-byte limit");
+    }
+    buffer.push((length >> 8) as u8);
+    buffer.push((length & 0xFF) as u8);
+    buffer.extend_from_slice(value.as_bytes());
+}
+
 const PROTOCOL_NAME: &str = "MQTT";
 const PROTOCOL_LEVEL: u8 = 4; // MQTT 3.1.1
 
@@ -172,44 +182,29 @@ impl Packet {
                 packet.variable_header.push(connect_flags.to_byte());
 
                 // Keep Alive
-                packet.variable_header.push(0x00); // Keep Alive MSB
-                packet
-                    .variable_header
-                    .push(u8::from_be(self.keep_alive.unwrap().as_secs() as u8)); // Keep Alive LSB
+                let keep_alive_secs = self.keep_alive.unwrap().as_secs();
+                if keep_alive_secs > u16::MAX as u64 {
+                    panic!("Invalid keep alive: {keep_alive_secs} seconds does not fit in two bytes");
+                }
+                let keep_alive_field = keep_alive_secs as u16;
+                packet.variable_header.push((keep_alive_field >> 8) as u8); // Keep Alive MSB
+                packet.variable_header.push((keep_alive_field & 0xFF) as u8); // Keep Alive LSB
 
-                // Client id
-                packet.payload.push(0x00); // Client ID Length MSB
-                packet.payload.push(self.client_id.len() as u8); // Client ID Length LSB
-                packet.payload.extend_from_slice(self.client_id.as_bytes()); // Client ID
+                encode_mqtt_string(&mut packet.payload, &self.client_id); // Client ID
 
                 // Auth
-                if self.username.is_some() {
-                    packet.payload.push(0x00); // Username Length MSB
-                    packet
-                        .payload
-                        .push(self.username.as_ref().unwrap().len() as u8); // Username Length LSB
-                    packet
-                        .payload
-                        .extend_from_slice(self.username.as_ref().unwrap().as_bytes());
+                if let Some(username) = &self.username {
+                    encode_mqtt_string(&mut packet.payload, username);
                 }
-                if self.password.is_some() {
-                    packet.payload.push(0x00); // Password Length MSB
-                    packet
-                        .payload
-                        .push(self.password.as_ref().unwrap().len() as u8); // Password Length LSB
-                    packet
-                        .payload
-                        .extend_from_slice(self.password.as_ref().unwrap().as_bytes());
+                if let Some(password) = &self.password {
+                    encode_mqtt_string(&mut packet.payload, password);
                 }
             }
             PacketType::PUBLISH => {
-                packet.variable_header.push(0x00); // Topic name Length MSB
-                packet
-                    .variable_header
-                    .push(self.topic.as_ref().unwrap().len() as u8); // Topic name Length LSB
-                packet
-                    .variable_header
-                    .extend_from_slice(self.topic.as_ref().unwrap().as_bytes()); // Topic Name
+                encode_mqtt_string(
+                    &mut packet.variable_header,
+                    self.topic.as_ref().unwrap(),
+                ); // Topic Name
 
                 // Packet Identifier - optional for QoS 0
                 // packet.variable_header.push(0x00); // Packet Identifier MSB
@@ -225,13 +220,10 @@ impl Packet {
                 packet.variable_header.push(0x00); // Packet Identifier MSB
                 packet.variable_header.push(0x01); // Packet Identifier LSB
 
-                packet.variable_header.push(0x00); // Topic Filter Length MSB
-                packet
-                    .variable_header
-                    .push(self.topic_filter.as_ref().unwrap().len() as u8); // Topic Filter Length LSB
-                packet
-                    .variable_header
-                    .extend_from_slice(self.topic_filter.as_ref().unwrap().as_bytes()); // Topic Filter
+                encode_mqtt_string(
+                    &mut packet.variable_header,
+                    self.topic_filter.as_ref().unwrap(),
+                ); // Topic Filter
 
                 packet.variable_header.push(0x00); // Requested QoS
             }
