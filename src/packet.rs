@@ -6,6 +6,7 @@ use std::time::Duration;
 use tracing::{event, Level};
 
 #[derive(Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum PacketType {
     CONNECT = 1,
     CONNACK = 2,
@@ -31,13 +32,14 @@ impl From<u8> for PacketType {
     }
 }
 
+#[allow(dead_code)]
 struct Packet {
     packet_type: PacketType,
     username: Option<String>,
     password: Option<String>,
     keep_alive: Option<Duration>,
     client_id: String,
-    packet_id: Option<u8>,
+    packet_id: Option<u8>, // Reserved for future QoS > 0 support
     topic: Option<String>,
     topic_filter: Option<String>,
     message: Option<String>,
@@ -80,6 +82,7 @@ impl Packet {
         self
     }
 
+    #[allow(dead_code)] // Reserved for future QoS > 0 support
     fn with_packet_id(mut self, packet_id: u8) -> Packet {
         self.packet_id = Some(packet_id);
         self
@@ -123,7 +126,6 @@ impl ConnectFlags {
             | self.will_qos << 3 // QoS level is 2 bits (0, 1, 2)
             | self.will_flag << 2
             | self.clean_session << 1
-            | 0 // reserved
     }
 }
 
@@ -286,13 +288,18 @@ impl Packet {
 }
 
 pub fn craft_connect_packet(username: Option<String>, password: Option<String>) -> Vec<u8> {
-    Packet::new(PacketType::CONNECT)
+    let mut packet = Packet::new(PacketType::CONNECT)
         .with_client_id("rust".to_string())
-        .with_keep_alive(Duration::from_secs(10))
-        .with_username(username.unwrap_or("".to_string()))
-        .with_password(password.unwrap_or("".to_string()))
-        .to_raw_packet()
-        .to_bytes()
+        .with_keep_alive(Duration::from_secs(10));
+
+    if let Some(u) = username {
+        packet = packet.with_username(u);
+    }
+    if let Some(p) = password {
+        packet = packet.with_password(p);
+    }
+
+    packet.to_raw_packet().to_bytes()
 }
 
 pub fn craft_publish_packet(topic: String, payload: String, retain: bool) -> Vec<u8> {
@@ -321,6 +328,7 @@ pub fn craft_subscribe_packet(topic_filter: String) -> Vec<u8> {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum ConnackReturnCode {
     ConnectionAccepted = 0,
     ConnectionRefusedUnacceptableProtocolVersion = 1,
@@ -451,7 +459,9 @@ mod tests {
     #[test]
     fn test_parse_publish_packet() {
         // Non-retained packet
-        let packet = vec![48, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33];
+        let packet = vec![
+            48, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33,
+        ];
         let received = parse_publish_packet(&packet);
         assert_eq!(received.topic, "a/b");
         assert_eq!(received.payload, "Hello, MQTT!");
@@ -461,7 +471,9 @@ mod tests {
     #[test]
     fn test_parse_publish_packet_retained() {
         // Retained packet (first byte has retain bit set)
-        let packet = vec![49, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33];
+        let packet = vec![
+            49, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33,
+        ];
         let received = parse_publish_packet(&packet);
         assert_eq!(received.topic, "a/b");
         assert_eq!(received.payload, "Hello, MQTT!");

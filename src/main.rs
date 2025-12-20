@@ -26,7 +26,11 @@ async fn main() {
 
     loop {
         match mqtt_client
-            .publish("a/b".to_string(), "msg".to_string(), PublishOptions::default())
+            .publish(
+                "a/b".to_string(),
+                "msg".to_string(),
+                PublishOptions::default(),
+            )
             .await
         {
             Ok(_) => println!("Message published successfully"),
