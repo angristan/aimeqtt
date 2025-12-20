@@ -41,6 +41,7 @@ struct Packet {
     topic: Option<String>,
     topic_filter: Option<String>,
     message: Option<String>,
+    retain: bool,
 }
 
 impl Packet {
@@ -55,6 +56,7 @@ impl Packet {
             topic: None,
             topic_filter: None,
             message: None,
+            retain: false,
         }
     }
 
@@ -95,6 +97,11 @@ impl Packet {
 
     fn with_message(mut self, message: String) -> Packet {
         self.message = Some(message);
+        self
+    }
+
+    fn with_retain(mut self, retain: bool) -> Packet {
+        self.retain = retain;
         self
     }
 }
@@ -203,6 +210,10 @@ impl Packet {
                 }
             }
             PacketType::PUBLISH => {
+                if self.retain {
+                    packet.fixed_header[0] |= 0b0000_0001; // Set RETAIN flag
+                }
+
                 packet.variable_header.push(0x00); // Topic name Length MSB
                 packet
                     .variable_header
@@ -284,11 +295,12 @@ pub fn craft_connect_packet(username: Option<String>, password: Option<String>) 
         .to_bytes()
 }
 
-pub fn craft_publish_packet(topic: String, payload: String) -> Vec<u8> {
+pub fn craft_publish_packet(topic: String, payload: String, retain: bool) -> Vec<u8> {
     Packet::new(PacketType::PUBLISH)
         .with_client_id("rust".to_string())
         .with_topic(topic)
         .with_message(payload)
+        .with_retain(retain)
         .to_raw_packet()
         .to_bytes()
 }
@@ -363,17 +375,32 @@ pub fn parse_suback_packet(packet: &[u8]) {
     event!(Level::DEBUG, "SUBACK Return Code: {}", return_code);
 }
 
-pub fn parse_publish_packet(packet: &[u8]) -> (String, String) {
+/// A received PUBLISH message from the broker.
+#[derive(Debug, Clone)]
+pub struct ReceivedPublish {
+    pub topic: String,
+    pub payload: String,
+    pub retain: bool,
+}
+
+pub fn parse_publish_packet(packet: &[u8]) -> ReceivedPublish {
     // Parse the PUBLISH packet according to MQTT protocol specification
+    let retain = (packet[0] & 0b0000_0001) != 0;
+
     let topic_length = (packet[2] as u16) << 8 | packet[3] as u16;
     let topic = std::str::from_utf8(&packet[4..(4 + topic_length as usize)]).unwrap();
 
-    let message = std::str::from_utf8(&packet[(4 + topic_length as usize)..]).unwrap();
+    let payload = std::str::from_utf8(&packet[(4 + topic_length as usize)..]).unwrap();
 
     event!(Level::DEBUG, "PUBLISH Topic: {}", topic);
-    event!(Level::DEBUG, "PUBLISH Message: {}", message);
+    event!(Level::DEBUG, "PUBLISH Payload: {}", payload);
+    event!(Level::DEBUG, "PUBLISH Retain: {}", retain);
 
-    (topic.to_string(), message.to_string())
+    ReceivedPublish {
+        topic: topic.to_string(),
+        payload: payload.to_string(),
+        retain,
+    }
 }
 
 #[cfg(test)]
@@ -403,11 +430,42 @@ mod tests {
 
     #[test]
     fn test_craft_publish_packet() {
-        let packet = craft_publish_packet("a/b".to_string(), "Hello, MQTT!".to_string());
+        let packet = craft_publish_packet("a/b".to_string(), "Hello, MQTT!".to_string(), false);
+        // First byte 48 = 0x30 = 0011 0000 (PUBLISH, no flags)
         assert_eq!(
             packet,
             vec![48, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33]
         );
+    }
+
+    #[test]
+    fn test_craft_publish_packet_retained() {
+        let packet = craft_publish_packet("a/b".to_string(), "Hello, MQTT!".to_string(), true);
+        // First byte 49 = 0x31 = 0011 0001 (PUBLISH, retain flag set)
+        assert_eq!(
+            packet,
+            vec![49, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33]
+        );
+    }
+
+    #[test]
+    fn test_parse_publish_packet() {
+        // Non-retained packet
+        let packet = vec![48, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33];
+        let received = parse_publish_packet(&packet);
+        assert_eq!(received.topic, "a/b");
+        assert_eq!(received.payload, "Hello, MQTT!");
+        assert!(!received.retain);
+    }
+
+    #[test]
+    fn test_parse_publish_packet_retained() {
+        // Retained packet (first byte has retain bit set)
+        let packet = vec![49, 17, 0, 3, 97, 47, 98, 72, 101, 108, 108, 111, 44, 32, 77, 81, 84, 84, 33];
+        let received = parse_publish_packet(&packet);
+        assert_eq!(received.topic, "a/b");
+        assert_eq!(received.payload, "Hello, MQTT!");
+        assert!(received.retain);
     }
 
     #[test]

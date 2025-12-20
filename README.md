@@ -9,6 +9,7 @@ Used as a learning ground for Rust, `tokio` and MQTT. Used in _production_ at my
 - Connect to a MQTT broker (`CONNECT`, `CONNACK`)
   - Username/password support
 - Send messages (`PUBLISH`)
+  - Retained messages support
 - Receive messages (`SUBSCRIBE`, `SUBACK`, `PUBLISH`)
 - Keep alive (`PINGREQ`, `PINGRESP`)
 
@@ -48,23 +49,42 @@ graph TB
 ## Usage
 
 ```rust
+use std::time::Duration;
+use aimeqtt::client::{self, ClientOptions, PublishOptions};
+use aimeqtt::ReceivedPublish;
+
 #[tokio::main]
 async fn main() {
-    let broker_host = "127.0.0.1";
-    let broker_port = 1883;
+    let options = ClientOptions::new()
+        .with_broker_host("127.0.0.1".to_string())
+        .with_broker_port(1883)
+        .with_keep_alive(60)
+        .with_callback_handler(on_message);
 
-    let mqtt_client_options = client::ClientOptions::new(broker_host.to_string(), broker_port)
-        .with_keep_alive(60);
+    let mut client = client::new(options).await;
 
-    let mut mqtt_client = client::new(mqtt_client_options).await;
+    // Subscribe to a topic
+    client.subscribe("foo/bar".to_string()).unwrap();
+
+    // Publish a message
+    client
+        .publish("foo/bar".to_string(), "Hello!".to_string(), PublishOptions::default())
+        .await
+        .unwrap();
+
+    // Publish a retained message
+    client
+        .publish("foo/bar".to_string(), "Retained!".to_string(), PublishOptions::new().retain())
+        .await
+        .unwrap();
 
     loop {
-        mqtt_client
-            .publish("foo/bar".to_string(), "Hello!".to_string())
-            .expect("Failed to send message");
-
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+fn on_message(msg: ReceivedPublish) {
+    println!("Received on '{}': {} (retained: {})", msg.topic, msg.payload, msg.retain);
 }
 ```
 

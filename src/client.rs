@@ -11,10 +11,30 @@ use tracing::event;
 use tracing::Level;
 
 use crate::error::MqttError;
+use crate::packet::ReceivedPublish;
+
+/// Options for publishing MQTT messages.
+#[derive(Debug, Clone, Default)]
+pub struct PublishOptions {
+    /// If true, the broker will store this message and send it to future subscribers.
+    pub retain: bool,
+}
+
+impl PublishOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn retain(mut self) -> Self {
+        self.retain = true;
+        self
+    }
+}
 
 pub struct PublishRequest {
     pub topic: String,
     pub payload: String,
+    pub options: PublishOptions,
     pub responder: Responder<()>,
 }
 
@@ -38,7 +58,7 @@ pub struct Client {
     raw_tcp_channel_sender: mpsc::UnboundedSender<Vec<u8>>,
     raw_tcp_channel_receiver: Option<mpsc::UnboundedReceiver<Vec<u8>>>,
 
-    callback_handler: Option<fn(String)>,
+    callback_handler: Option<fn(ReceivedPublish)>,
 }
 
 type Responder<T> = oneshot::Sender<Result<T, mpsc::error::SendError<Vec<u8>>>>;
@@ -50,7 +70,7 @@ pub struct ClientOptions<H, P> {
     username: Option<String>,
     password: Option<String>,
     keep_alive: Option<u16>,
-    callback_handler: Option<fn(String)>,
+    callback_handler: Option<fn(ReceivedPublish)>,
 }
 
 #[derive(Default, Clone)]
@@ -103,7 +123,10 @@ impl<B, P> ClientOptions<B, P> {
         self
     }
 
-    pub fn with_callback_handler(mut self, callback_handler: fn(String)) -> ClientOptions<B, P> {
+    pub fn with_callback_handler(
+        mut self,
+        callback_handler: fn(ReceivedPublish),
+    ) -> ClientOptions<B, P> {
         self.callback_handler = Some(callback_handler);
         self
     }
@@ -237,7 +260,8 @@ impl Client {
     }
 
     async fn handle_publish(&self, publish_req: PublishRequest) -> std::io::Result<()> {
-        let result = self.send_publish_packet(publish_req.topic, publish_req.payload);
+        let result =
+            self.send_publish_packet(publish_req.topic, publish_req.payload, &publish_req.options);
         match result {
             Ok(_) => {
                 event!(Level::DEBUG, "PUBLISH message sent successfully.");
@@ -274,10 +298,10 @@ impl Client {
         match crate::packet::PacketType::from(packet_type) {
             crate::packet::PacketType::CONNACK => crate::packet::parse_connack_packet(packet),
             crate::packet::PacketType::PUBLISH => {
-                let (_, payload) = crate::packet::parse_publish_packet(packet);
+                let received = crate::packet::parse_publish_packet(packet);
                 if let Some(callback_handler) = self.callback_handler {
                     tokio::spawn(async move {
-                        callback_handler(payload);
+                        callback_handler(received);
                     });
                 }
             }
@@ -302,13 +326,19 @@ impl Client {
         }
     }
 
-    pub async fn publish(&self, topic: String, payload: String) -> Result<(), ClientError> {
+    pub async fn publish(
+        &self,
+        topic: String,
+        payload: String,
+        options: PublishOptions,
+    ) -> Result<(), ClientError> {
         let (resp_tx, resp_rx) = oneshot::channel();
 
         self.publish_channel_sender
             .send(PublishRequest {
                 topic,
                 payload,
+                options,
                 responder: resp_tx,
             })
             .map_err(|e| {
@@ -355,8 +385,9 @@ impl Client {
         &self,
         topic: String,
         payload: String,
+        options: &PublishOptions,
     ) -> Result<(), mpsc::error::SendError<Vec<u8>>> {
-        let publish_packet = crate::packet::craft_publish_packet(topic, payload);
+        let publish_packet = crate::packet::craft_publish_packet(topic, payload, options.retain);
         self.raw_tcp_channel_sender.send(publish_packet)
     }
 }

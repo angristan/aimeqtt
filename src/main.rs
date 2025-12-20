@@ -4,6 +4,9 @@ mod client;
 mod error;
 mod packet;
 
+use client::PublishOptions;
+use packet::ReceivedPublish;
+
 #[tokio::main]
 async fn main() {
     let broker_host = "127.0.0.1";
@@ -23,7 +26,7 @@ async fn main() {
 
     loop {
         match mqtt_client
-            .publish("a/b".to_string(), "msg".to_string())
+            .publish("a/b".to_string(), "msg".to_string(), PublishOptions::default())
             .await
         {
             Ok(_) => println!("Message published successfully"),
@@ -34,6 +37,9 @@ async fn main() {
     }
 }
 
-fn callback_handler(payload: String) {
-    println!("Received message: {payload}");
+fn callback_handler(msg: ReceivedPublish) {
+    println!(
+        "Received message on '{}': {} (retained: {})",
+        msg.topic, msg.payload, msg.retain
+    );
 }
