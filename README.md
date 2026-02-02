@@ -46,6 +46,15 @@ graph TB
     Reconnect --> ConnectBroker
 ```
 
+## Installation
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+aimeqtt = { git = "https://github.com/angristan/aimeqtt" }
+```
+
 ## Usage
 
 ```rust
