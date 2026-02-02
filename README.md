@@ -15,6 +15,15 @@ Used as a learning ground for Rust, `tokio` and MQTT. Used in _production_ at my
 
 It only supports QoS 0 for now.
 
+## Installation
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+aimeqtt = { git = "https://github.com/angristan/aimeqtt" }
+```
+
 ## Design
 
 The library has two main components:
