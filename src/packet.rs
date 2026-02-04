@@ -192,23 +192,15 @@ impl Packet {
                 packet.payload.extend_from_slice(self.client_id.as_bytes()); // Client ID
 
                 // Auth
-                if self.username.is_some() {
+                if let Some(username) = &self.username {
                     packet.payload.push(0x00); // Username Length MSB
-                    packet
-                        .payload
-                        .push(self.username.as_ref().unwrap().len() as u8); // Username Length LSB
-                    packet
-                        .payload
-                        .extend_from_slice(self.username.as_ref().unwrap().as_bytes());
+                    packet.payload.push(username.len() as u8); // Username Length LSB
+                    packet.payload.extend_from_slice(username.as_bytes());
                 }
-                if self.password.is_some() {
+                if let Some(password) = &self.password {
                     packet.payload.push(0x00); // Password Length MSB
-                    packet
-                        .payload
-                        .push(self.password.as_ref().unwrap().len() as u8); // Password Length LSB
-                    packet
-                        .payload
-                        .extend_from_slice(self.password.as_ref().unwrap().as_bytes());
+                    packet.payload.push(password.len() as u8); // Password Length LSB
+                    packet.payload.extend_from_slice(password.as_bytes());
                 }
             }
             PacketType::PUBLISH => {
